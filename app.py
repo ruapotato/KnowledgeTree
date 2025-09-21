@@ -1,6 +1,7 @@
 # app.py
 import os
 import uuid
+from urllib.parse import unquote
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from neo4j import GraphDatabase, basic_auth
@@ -45,19 +46,46 @@ def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # --- API Endpoints ---
+@app.route('/api/resolve_path', methods=['POST'])
+def resolve_path():
+    """Finds a node's ID from a human-readable path."""
+    path_parts = request.json.get('path', [])
+    if not path_parts:
+        return jsonify({'id': 'root'})
+
+    with driver.session() as session:
+        # Start with the root node
+        query = "MATCH (n0:ContextItem {id: 'root'})"
+        match_clauses = []
+        where_clauses = []
+        
+        for i, part in enumerate(path_parts):
+            prev_node, curr_node = f"n{i}", f"n{i+1}"
+            match_clauses.append(f"MATCH ({prev_node})-[:PARENT_OF]->({curr_node})")
+            where_clauses.append(f"{curr_node}.name = ${i}")
+        
+        full_query = "\n".join([query] + match_clauses) + "\nWHERE " + " AND ".join(where_clauses) + f"\nRETURN n{len(path_parts)}.id as id"
+        
+        params = {str(i): part for i, part in enumerate(path_parts)}
+        result = session.run(full_query, params).single()
+
+    if result:
+        return jsonify({'id': result['id']})
+    else:
+        return jsonify({'error': 'Path not found'}), 404
+
+
 @app.route('/api/nodes/<parent_id>', methods=['GET'])
 def get_nodes_in_folder(parent_id):
+    """Fetches immediate children. This fixes the double-rendering bug."""
     with driver.session() as session:
         query = """
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
             RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, child.is_attached as is_attached
-            UNION
-            MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(:ContextItem {is_attached: true})-[:PARENT_OF]->(grandchild)
-            RETURN DISTINCT grandchild.id AS id, grandchild.name AS name, grandchild.is_folder AS is_folder, grandchild.is_attached as is_attached
+            ORDER BY child.is_folder DESC, child.name
         """
         result = session.run(query, parent_id=parent_id)
         records = [dict(record) for record in result]
-        records.sort(key=lambda x: (not x.get('is_folder', False), x.get('name', '')))
         return jsonify(records)
 
 @app.route('/api/path/<node_id>', methods=['GET'])
@@ -69,7 +97,6 @@ def get_path(node_id):
     with driver.session() as session:
         result = session.run("""
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
-            WHERE NOT any(n IN nodes(path) WHERE n.is_attached = true AND n.id <> $node_id)
             WITH nodes(path) AS path_nodes
             UNWIND path_nodes as node
             RETURN node.id AS id, node.name AS name
@@ -107,10 +134,8 @@ def create_node():
 
     with driver.session() as session:
         parent_is_attached = session.run("MATCH (p:ContextItem {id: $id}) RETURN p.is_attached as attached", id=parent_id).single()['attached']
-        
-        # **LOGIC CHANGE**: Only block creating a *regular folder* inside an attached folder.
         if parent_is_attached and is_folder and not is_attached:
-             return jsonify({'error': 'Only attached folders or knowledge articles can be created in an attached folder.'}), 400
+             return jsonify({'error': 'Only attached folders or knowledge articles can be created here.'}), 400
 
         session.run("""
             MATCH (parent:ContextItem {id: $parent_id})
@@ -118,7 +143,6 @@ def create_node():
             CREATE (parent)-[:PARENT_OF]->(child)
         """, parent_id=parent_id, id=new_id, name=name, is_folder=is_folder, is_attached=is_attached)
     return jsonify({'success': True, 'id': new_id, 'name': name, 'is_folder': is_folder, 'is_attached': is_attached})
-
 
 @app.route('/api/node/<node_id>', methods=['PUT'])
 def update_node(node_id):

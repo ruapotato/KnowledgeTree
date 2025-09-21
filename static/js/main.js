@@ -8,40 +8,55 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// --- File Manager (Index Page) Logic ---
 function initIndexPage() {
     const fileBrowser = document.getElementById('file-browser');
-    const breadcrumb = document.getElementById('breadcrumb');
+    const breadcrumbNav = document.getElementById('breadcrumb');
     const contextMenu = document.getElementById('context-menu');
     const backBtn = document.getElementById('back-btn');
     
-    let currentFolderId = 'root';
+    let currentFolderId = null;
+    let currentPath = [];
     let currentFolderIsAttached = false;
     let selectedItemId = null;
     let selectedItemType = { is_folder: false, is_attached: false };
 
-    async function navigateTo(folderId, fromHistory = false) {
-        currentFolderId = folderId;
+    async function navigateToPath(pathArray, fromHistory = false) {
+        let nodeId = 'root';
+        if (pathArray.length > 0) {
+            const response = await fetch('/api/resolve_path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: pathArray })
+            });
+            if (!response.ok) {
+                console.error("Path not found, redirecting to root.");
+                navigateToPath([], fromHistory); // Go to root if path is invalid
+                return;
+            }
+            const data = await response.json();
+            nodeId = data.id;
+        }
+
+        currentFolderId = nodeId;
         selectedItemId = null;
 
-        // Update URL unless we are navigating from a history event (popstate)
         if (!fromHistory) {
-            history.pushState({ folderId: folderId }, "", `/#/${folderId}`);
+            const urlPath = pathArray.map(p => encodeURIComponent(p)).join('/');
+            history.pushState({ path: pathArray }, "", `/#/${urlPath}`);
         }
         
-        const response = await fetch(`/api/node/${folderId}`);
-        const data = await response.json();
-        currentFolderIsAttached = data.is_attached || false;
+        const nodeDataResponse = await fetch(`/api/node/${nodeId}`);
+        const nodeData = await nodeDataResponse.json();
+        currentFolderIsAttached = nodeData.is_attached || false;
         
-        // Disable back button if at root
-        backBtn.disabled = (folderId === 'root');
+        backBtn.disabled = (pathArray.length === 0);
 
         await Promise.all([
-            renderItems(folderId),
-            renderBreadcrumb(folderId)
+            renderItems(nodeId),
+            renderBreadcrumb(nodeId)
         ]);
     }
-
+    
     async function renderItems(folderId) {
         const response = await fetch(`/api/nodes/${folderId}`);
         const items = await response.json();
@@ -73,7 +88,8 @@ function initIndexPage() {
 
             itemEl.addEventListener('dblclick', () => {
                 if (item.is_folder) {
-                    navigateTo(item.id);
+                    const newPath = [...currentPath, item.name];
+                    navigateToPath(newPath);
                 } else {
                     window.location.href = `/view/${item.id}`;
                 }
@@ -82,57 +98,70 @@ function initIndexPage() {
             fileBrowser.appendChild(itemEl);
         });
     }
-
+    
     async function renderBreadcrumb(folderId) {
         const response = await fetch(`/api/path/${folderId}`);
-        const path = await response.json();
+        const pathData = await response.json();
+        currentPath = pathData.map(p => p.name).slice(1);
 
-        breadcrumb.innerHTML = '';
-        path.forEach((segment, index) => {
-            if (index < path.length - 1) {
+        breadcrumbNav.innerHTML = '';
+        pathData.forEach((segment, index) => {
+            const pathSlice = pathData.slice(1, index + 1).map(p => p.name);
+            const urlSlice = pathSlice.map(p => encodeURIComponent(p)).join('/');
+            
+            if (index < pathData.length - 1) {
                 const link = document.createElement('a');
-                link.href = `/#/${segment.id}`;
+                link.href = `/#/${urlSlice}`;
                 link.textContent = segment.name;
-                link.onclick = (e) => { e.preventDefault(); navigateTo(segment.id); };
-                breadcrumb.appendChild(link);
-                breadcrumb.appendChild(document.createElement('span')).textContent = '>';
+                link.onclick = (e) => { e.preventDefault(); navigateToPath(pathSlice); };
+                breadcrumbNav.appendChild(link);
+                breadcrumbNav.appendChild(document.createElement('span')).textContent = '>';
             } else {
-                breadcrumb.appendChild(document.createTextNode(` ${segment.name}`));
+                breadcrumbNav.appendChild(document.createTextNode(` ${segment.name}`));
             }
         });
     }
 
     function showContextMenu(e) {
         e.preventDefault();
-        contextMenu.style.display = 'block';
-        contextMenu.style.left = `${e.pageX}px`;
-        contextMenu.style.top = `${e.pageY}px`;
-
         const targetItem = e.target.closest('.file-item');
-        const [openEl, renameEl, deleteEl, newFolderEl, newAttachedEl, newArticleEl] = [
-            'context-open', 'context-rename', 'context-delete', 'context-new-folder', 
-            'context-new-attached', 'context-new-article'
-        ].map(id => document.getElementById(id));
-
-        [openEl, renameEl, deleteEl, newFolderEl, newAttachedEl, newArticleEl].forEach(el => el.classList.remove('hidden'));
+        
+        contextMenu.style.display = 'none';
 
         if (targetItem) {
             targetItem.click();
         } else {
             selectedItemId = null;
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
+        }
+        
+        contextMenu.style.display = 'block';
+        contextMenu.style.left = `${e.pageX}px`;
+        contextMenu.style.top = `${e.pageY}px`;
+
+        const [openEl, renameEl, deleteEl, newFolderEl, newAttachedEl, newArticleEl] = [
+            'context-open', 'context-rename', 'context-delete', 'context-new-folder', 
+            'context-new-attached', 'context-new-article'
+        ].map(id => document.getElementById(id));
+        
+        [openEl, renameEl, deleteEl, newFolderEl, newAttachedEl, newArticleEl].forEach(el => el.classList.remove('hidden'));
+
+        if (!selectedItemId) {
             [openEl, renameEl, deleteEl].forEach(el => el.classList.add('hidden'));
         }
-
+        
         if (currentFolderIsAttached) {
-            // Can't create a *regular* folder inside an attached one
             newFolderEl.classList.add('hidden');
         }
     }
-
+    
     document.getElementById('file-browser-container').addEventListener('contextmenu', showContextMenu);
-    document.addEventListener('click', () => contextMenu.style.display = 'none');
-
+    document.addEventListener('click', (e) => {
+        if (!contextMenu.contains(e.target)) {
+            contextMenu.style.display = 'none';
+        }
+    });
+    
     async function createNewItem(isFolder, isAttached = false) {
         const type = isAttached ? 'attached folder' : (isFolder ? 'folder' : 'knowledge');
         const name = prompt(`Enter name for new ${type}:`);
@@ -171,7 +200,7 @@ function initIndexPage() {
             renderItems(currentFolderId);
         }
     }
-    
+
     document.getElementById('context-new-folder').onclick = () => createNewItem(true, false);
     document.getElementById('context-new-attached').onclick = () => createNewItem(true, true);
     document.getElementById('context-new-article').onclick = () => createNewItem(false, false);
@@ -179,26 +208,26 @@ function initIndexPage() {
     document.getElementById('context-delete').onclick = deleteItem;
     document.getElementById('context-open').onclick = () => {
         if (selectedItemId) {
-            if (selectedItemType.is_folder) navigateTo(selectedItemId);
+            if (selectedItemType.is_folder) {
+                const newPath = [...currentPath, document.querySelector(`.file-item[data-id="${selectedItemId}"] .name`).textContent];
+                navigateToPath(newPath);
+            }
             else window.location.href = `/view/${selectedItemId}`;
         }
     };
 
-    // Navigation Logic
     backBtn.addEventListener('click', () => history.back());
     window.addEventListener('popstate', (e) => {
-        if (e.state && e.state.folderId) {
-            navigateTo(e.state.folderId, true);
+        if (e.state && e.state.path) {
+            navigateToPath(e.state.path, true);
         }
     });
 
-    // Initial Load from URL
-    const initialFolderId = window.location.hash.substring(2) || 'root';
-    navigateTo(initialFolderId, true);
-    history.replaceState({ folderId: initialFolderId }, "", `/#/${initialFolderId}`);
+    const initialPath = window.location.hash.substring(2).split('/').filter(p => p).map(p => decodeURIComponent(p));
+    navigateToPath(initialPath, true);
+    history.replaceState({ path: initialPath }, "", `/#/${initialPath.map(p=>encodeURIComponent(p)).join('/')}`);
 }
 
-// --- View Page Logic ---
 function initViewPage() {
     const nodeNameEl = document.getElementById('node-name');
     const contentDisplayEl = document.getElementById('content-display');
@@ -212,16 +241,12 @@ function initViewPage() {
     async function loadNodeData() {
         const response = await fetch(`/api/node/${NODE_ID}`);
         const data = await response.json();
-
         nodeNameEl.textContent = data.name;
         contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Click Edit to add some.</p>';
         mde.value(data.content || '');
-
         if (data.is_folder) {
             document.body.classList.add('is-folder');
         }
-
-        // Display files
         fileListEl.innerHTML = '';
         if (data.files && data.files.length > 0) {
             const ul = document.createElement('ul');
@@ -239,7 +264,6 @@ function initViewPage() {
             fileListEl.innerHTML = '<p>No files attached.</p>';
         }
     }
-
     saveBtn.addEventListener('click', async () => {
         await fetch(`/api/node/${NODE_ID}`, {
             method: 'PUT',
@@ -247,9 +271,8 @@ function initViewPage() {
             body: JSON.stringify({ content: mde.value() })
         });
         alert('Content saved!');
-        loadNodeData(); // Refresh displayed content
+        loadNodeData();
     });
-
     exportBtn.addEventListener('click', async () => {
         const response = await fetch(`/api/context/${NODE_ID}`);
         const data = await response.json();
@@ -262,7 +285,6 @@ function initViewPage() {
             alert('Failed to copy context.');
         }
     });
-
     uploadBtn.addEventListener('click', async () => {
         const fileInput = document.getElementById('file-upload-input');
         if (fileInput.files.length === 0) {
@@ -271,20 +293,17 @@ function initViewPage() {
         }
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
-
         const response = await fetch(`/api/upload/${NODE_ID}`, {
             method: 'POST',
             body: formData
         });
-        
         if (response.ok) {
             alert('File uploaded successfully!');
-            fileInput.value = ''; // Clear the input
-            loadNodeData(); // Refresh the file list
+            fileInput.value = '';
+            loadNodeData();
         } else {
             alert('File upload failed.');
         }
     });
-
     loadNodeData();
 }
