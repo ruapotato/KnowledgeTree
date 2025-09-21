@@ -7,7 +7,7 @@ import threading
 import json
 from urllib.parse import unquote, quote
 from dotenv import load_dotenv, set_key
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, send_file
 from neo4j import GraphDatabase, basic_auth
 import markdown
 from scripts.pull_freshservice import sync_companies_and_users
@@ -44,20 +44,14 @@ def quote_plus_filter(s):
 
 @app.route('/')
 def index():
-    # The root of the site now redirects to the main browser view.
     return redirect(url_for('browse'))
 
 @app.route('/browse/', defaults={'path': ''})
 @app.route('/browse/<path:path>')
 def browse(path):
-    """
-    This is now the ONLY route for browsing the knowledge tree.
-    It resolves the path server-side and passes all necessary data to the template.
-    """
     path_parts = [p for p in path.split('/') if p]
     
     with driver.session() as session:
-        # 1. Resolve path to get the current node ID
         query = "MATCH (n0:ContextItem {id: 'root'})"
         match_clauses, where_clauses, params = [], [], {}
         for i, part in enumerate(path_parts):
@@ -72,7 +66,6 @@ def browse(path):
         result = session.run(full_query, params).single()
         node_id = result['id'] if result else 'root'
 
-        # 2. Get children of the current node
         children_query = """
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
             RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, 
@@ -82,7 +75,6 @@ def browse(path):
         children_result = session.run(children_query, parent_id=node_id)
         items = [dict(record) for record in children_result]
 
-        # 3. Get breadcrumb path for navigation
         path_query = """
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
             RETURN [n in nodes(path) | n.name] AS names
@@ -98,11 +90,7 @@ def browse(path):
 
 @app.route('/view/<node_id>')
 def view_node(node_id):
-    """
-    This route now reliably finds the parent's path for a correct "back" button link.
-    """
     with driver.session() as session:
-        # Find the parent of the current node to construct the back link
         path_query = """
             MATCH (parent:ContextItem)-[:PARENT_OF]->(:ContextItem {id: $node_id})
             WITH parent
@@ -113,7 +101,6 @@ def view_node(node_id):
         
         parent_path = ''
         if result and result['names']:
-            # Create a URL-safe path from the names list, skipping the root
             parent_path = "/".join([quote(name) for name in result['names'][1:]])
 
     return render_template('view.html', node_id=node_id, parent_path=parent_path)
@@ -126,8 +113,11 @@ def uploaded_file(filename):
 # --- Admin Routes ---
 @app.route('/admin')
 def admin_panel():
-    # A simple admin page placeholder
-    return render_template('admin.html')
+    settings = {
+        'FRESHSERVICE_PULL_INTERVAL': os.getenv('FRESHSERVICE_PULL_INTERVAL', 1440),
+        'DATTO_PULL_INTERVAL': os.getenv('DATTO_PULL_INTERVAL', 1440)
+    }
+    return render_template('admin.html', settings=settings)
 
 # --- API Endpoints ---
 
@@ -139,8 +129,6 @@ def search_nodes():
     if not query: return jsonify([])
 
     with driver.session() as session:
-        # THE FIX: This query now finds the full path from the absolute root
-        # for every search result, ensuring correct URLs.
         result = session.run("""
             MATCH (startNode:ContextItem {id: $start_node_id})-[:PARENT_OF*0..]->(node)
             WHERE toLower(node.name) CONTAINS toLower($query) OR toLower(node.content) CONTAINS toLower($query)
@@ -156,17 +144,48 @@ def search_nodes():
         processed_results = []
         for record in result:
             record_dict = dict(record)
-            path_list = record_dict['path_names'][1:] # Exclude root
+            path_list = record_dict['path_names'][1:]
             folder_path = "/".join([quote(name) for name in path_list])
             record_dict['folder_path'] = folder_path
             processed_results.append(record_dict)
 
         return jsonify(processed_results)
 
+@app.route('/api/node', methods=['POST'])
+def create_node():
+    """
+    Creates a new node (folder, attached folder, or knowledge article).
+    This is called by the context menu.
+    """
+    data = request.json
+    parent_id = data.get('parent_id')
+    name = data.get('name')
+    is_folder = data.get('is_folder', False)
+    is_attached = data.get('is_attached', False)
+
+    if not all([parent_id, name]):
+        return jsonify({'error': 'parent_id and name are required'}), 400
+
+    new_id = str(uuid.uuid4())
+    with driver.session() as session:
+        session.run("""
+            MATCH (parent:ContextItem {id: $parent_id})
+            CREATE (child:ContextItem {
+                id: $id, 
+                name: $name, 
+                is_folder: $is_folder, 
+                content: '', 
+                is_attached: $is_attached, 
+                read_only: false
+            })
+            CREATE (parent)-[:PARENT_OF]->(child)
+        """, parent_id=parent_id, id=new_id, name=name, is_folder=is_folder, is_attached=is_attached)
+    return jsonify({'success': True, 'id': new_id})
+
+
 @app.route('/api/node/<node_id>', methods=['GET'])
 def get_node(node_id):
     def fetch_node(tx, node_id):
-        # Using OPTIONAL MATCH to gracefully handle nodes that might not have files
         query = """
         MATCH (n:ContextItem {id: $node_id})
         OPTIONAL MATCH (n)-[:HAS_FILE]->(f:File)
@@ -179,7 +198,6 @@ def get_node(node_id):
             data = dict(result)
             content = data.get('content') or ''
             data['content_html'] = markdown.markdown(content, extensions=['fenced_code', 'tables'])
-            # Ensure files list is clean even if there are no attachments
             data['files'] = [f for f in data.get('files', []) if f['id'] is not None]
             return data
         return None
@@ -261,24 +279,28 @@ def run_job(job_name):
 @app.route('/api/admin/export', methods=['GET'])
 def export_user_data():
     try:
-        export_file_path = "export.json"
         with driver.session() as session:
-            result = session.run(f"""
-                CALL apoc.export.json.query(
-                    'MATCH (n) WHERE n.read_only IS NULL OR n.read_only = false
-                     OPTIONAL MATCH (n)-[r]->(m) WHERE m.read_only IS NULL OR m.read_only = false
-                     RETURN n, r, m',
-                    "{export_file_path}", {{stream: true, writeNodeProperties: true}})
-                YIELD file
-                RETURN file
-            """).single()
-            if result and result['file']:
-                return send_file(export_file_path, as_attachment=True, download_name='knowledgetree_export.json')
-            else:
-                 return jsonify({'success': False, 'error': 'Export failed or produced no data.'}), 500
+            result = session.run("""
+                MATCH p = (:ContextItem {id:'root'})-[:PARENT_OF*..]->(n:ContextItem)
+                WHERE (n.read_only IS NULL OR n.read_only = false) AND n.is_folder = false
+                RETURN [node IN nodes(p) | node.name] AS path_parts, n.content AS content
+            """)
+            
+            export_data = []
+            for record in result:
+                file_path = "/".join(record['path_parts'][1:])
+                export_data.append({
+                    "path": file_path,
+                    "content": record['content']
+                })
+
+            export_file_path = "export.json"
+            with open(export_file_path, 'w') as f:
+                json.dump(export_data, f, indent=2)
+
+            return send_file(export_file_path, as_attachment=True, download_name='knowledgetree_export.json')
+
     except Exception as e:
-        if "Failed to invoke procedure `apoc.export.json.query`" in str(e):
-             return jsonify({'success': False, 'error': 'APOC extension not installed on Neo4j server.'}), 500
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/admin/import', methods=['POST'])
@@ -288,18 +310,48 @@ def import_user_data():
     file = request.files['file']
     if file:
         try:
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'import_data.json')
-            file.save(file_path)
+            import_data = json.load(file)
+            
             with driver.session() as session:
-                session.run(f"""
-                    CALL apoc.import.json("file://{os.path.abspath(file_path)}")
-                """)
-            os.remove(file_path)
-            return jsonify({'success': True})
+                with session.begin_transaction() as tx:
+                    for item in import_data:
+                        path_parts = item['path'].split('/')
+                        content = item['content']
+                        
+                        file_name = path_parts.pop()
+                        current_parent_id = 'root'
+
+                        for folder_name in path_parts:
+                            result = tx.run("""
+                                MATCH (parent:ContextItem {id: $parent_id})-[:PARENT_OF]->(child:ContextItem {name: $name})
+                                RETURN child.id AS id
+                            """, parent_id=current_parent_id, name=folder_name).single()
+
+                            if result:
+                                current_parent_id = result['id']
+                            else:
+                                new_folder_id = str(uuid.uuid4())
+                                tx.run("""
+                                    MATCH (parent:ContextItem {id: $parent_id})
+                                    CREATE (child:ContextItem {id: $id, name: $name, is_folder: true, read_only: false})
+                                    CREATE (parent)-[:PARENT_OF]->(child)
+                                """, parent_id=current_parent_id, id=new_folder_id, name=folder_name)
+                                current_parent_id = new_folder_id
+                        
+                        tx.run("""
+                            MATCH (parent:ContextItem {id: $parent_id})
+                            // Use a unique property for merging files within the same parent
+                            MERGE (file:ContextItem {name: $name, parent_id_for_merge: $parent_id})
+                            ON CREATE SET file.id = $id, file.content = $content, file.is_folder = false, file.read_only = false
+                            ON MATCH SET file.content = $content
+                            MERGE (parent)-[:PARENT_OF]->(file)
+                        """, parent_id=current_parent_id, name=file_name, id=str(uuid.uuid4()), content=content)
+
+            return jsonify({'success': True, 'message': 'Import successful.'})
+
         except Exception as e:
-            if "Failed to invoke procedure `apoc.import.json`" in str(e):
-                return jsonify({'success': False, 'error': 'APOC extension not installed on Neo4j server.'}), 500
             return jsonify({'success': False, 'error': str(e)}), 500
+            
     return jsonify({'error': 'File import failed'}), 500
 
 if __name__ == '__main__':

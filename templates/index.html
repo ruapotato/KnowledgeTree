@@ -42,13 +42,27 @@
             </div>
         </main>
     </div>
+
+    <div id="context-menu" class="context-menu">
+        <ul>
+            <li id="context-open"><i class="fas fa-folder-open"></i> Open</li>
+            <li id="context-rename"><i class="fas fa-edit"></i> Rename</li>
+            <li id="context-delete"><i class="fas fa-trash"></i> Delete</li>
+            <hr>
+            <li id="context-new-folder"><i class="fas fa-folder-plus"></i> New Folder</li>
+            <li id="context-new-attached"><i class="fas fa-paperclip"></i> New Attached Folder</li>
+            <li id="context-new-article"><i class="fas fa-file-medical"></i> New Knowledge</li>
+        </ul>
+    </div>
+
     <footer>
         <a href="{{ url_for('admin_panel') }}" class="admin-link">Admin Panel</a>
     </footer>
 
     <script>
-        // Pass the current path from the server to our JavaScript file.
+        // Pass data from server to JavaScript
         const CURRENT_PATH = "{{ current_path }}";
+        const CURRENT_NODE_ID = "{{ current_node_id }}";
     </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
