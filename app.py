@@ -1,11 +1,16 @@
 # app.py
 import os
 import uuid
+import schedule
+import time
+import threading
 from urllib.parse import unquote
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from neo4j import GraphDatabase, basic_auth
 import markdown
+from scripts.pull_freshservice import sync_companies_and_users
+from scripts.pull_datto import sync_datto_devices
 
 load_dotenv()
 
@@ -17,6 +22,28 @@ uri = os.getenv("NEO4J_URI")
 user = os.getenv("NEO4J_USER")
 password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver(uri, auth=basic_auth(user, password))
+
+# --- Scheduler ---
+def run_continuously(interval=1):
+    cease_continuous_run = threading.Event()
+
+    class ScheduleThread(threading.Thread):
+        @classmethod
+        def run(cls):
+            while not cease_continuous_run.is_set():
+                schedule.run_pending()
+                time.sleep(interval)
+
+    continuous_thread = ScheduleThread()
+    continuous_thread.start()
+    return cease_continuous_run
+
+def setup_scheduler():
+    freshservice_interval = int(os.getenv('FRESHSERVICE_PULL_INTERVAL', 1440))
+    datto_interval = int(os.getenv('DATTO_PULL_INTERVAL', 1440))
+
+    schedule.every(freshservice_interval).minutes.do(sync_companies_and_users).tag('freshservice')
+    schedule.every(datto_interval).minutes.do(sync_datto_devices).tag('datto')
 
 # Helper to ensure the root node exists
 def ensure_root_exists(tx):
@@ -42,13 +69,22 @@ def view_node(node_id):
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# --- Admin Route ---
+# --- Admin Routes ---
 @app.route('/admin')
 def admin_panel():
     return render_template('admin.html')
 
+@app.route('/admin/settings')
+def admin_settings():
+    # Pass current settings to the template
+    settings = {
+        'FRESHSERVICE_PULL_INTERVAL': os.getenv('FRESHSERVICE_PULL_INTERVAL'),
+        'DATTO_PULL_INTERVAL': os.getenv('DATTO_PULL_INTERVAL')
+    }
+    return render_template('admin_settings.html', settings=settings)
 
 # --- API Endpoints ---
+# (Existing API endpoints remain the same)
 @app.route('/api/resolve_path', methods=['POST'])
 def resolve_path():
     path_parts = request.json.get('path', [])
@@ -106,7 +142,10 @@ def get_node(node_id):
         result = tx.run(query, node_id=node_id).single()
         if result:
             data = dict(result)
-            data['content_html'] = markdown.markdown(data.get('content', ''), extensions=['fenced_code', 'tables'])
+            # --- THIS IS THE FIX ---
+            content = data.get('content') or ''
+            data['content_html'] = markdown.markdown(content, extensions=['fenced_code', 'tables'])
+            # --- END OF FIX ---
             data['files'] = [file for file in data.get('files', []) if file and file.get('id')]
             return data
         return None
@@ -249,7 +288,39 @@ def reinitialize_db():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+# New API endpoints for admin settings
+@app.route('/api/admin/save_settings', methods=['POST'])
+def save_settings():
+    settings = request.json
+    for key, value in settings.items():
+        set_key('.env', key, value)
+    
+    # Reschedule jobs
+    schedule.clear()
+    setup_scheduler()
+    
+    return jsonify({'success': True, 'message': 'Settings saved and scheduler updated.'})
+
+@app.route('/api/admin/run_job/<job_name>', methods=['POST'])
+def run_job(job_name):
+    if job_name == 'freshservice':
+        threading.Thread(target=sync_companies_and_users).start()
+        return jsonify({'success': True, 'message': 'Freshservice sync started.'})
+    elif job_name == 'datto':
+        threading.Thread(target=sync_datto_devices).start()
+        return jsonify({'success': True, 'message': 'Datto sync started.'})
+    return jsonify({'success': False, 'error': 'Invalid job name.'}), 400
+
+
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
+    
+    # Start the scheduler
+    setup_scheduler()
+    stop_run_continuously = run_continuously()
+    
     app.run(debug=True, port=5001)
+    
+    # Stop the scheduler thread when the app is closed
+    stop_run_continuously.set()

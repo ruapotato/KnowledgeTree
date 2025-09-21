@@ -2,3 +2,5 @@ flask
 neo4j
 python-dotenv
 markdown
+requests
+schedule
