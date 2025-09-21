@@ -155,33 +155,69 @@ def delete_node(node_id):
 
 @app.route('/api/context/<node_id>', methods=['GET'])
 def get_context(node_id):
-    def fetch_context(tx, node_id):
-        # **CORRECTED CYPHER QUERY**
-        query = """
+    def fetch_context_ordered(tx, node_id):
+        # 1. Get the ordered ancestor path from root to the target node
+        path_query = """
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
-            WITH nodes(path) AS ancestors
-            UNWIND ancestors AS ancestor
-            OPTIONAL MATCH (ancestor)-[:PARENT_OF]->(attached_folder:ContextItem {is_attached: true})
-            OPTIONAL MATCH (attached_folder)-[:PARENT_OF*0..]->(attached_descendant)
-            WITH collect(DISTINCT ancestor) + collect(DISTINCT attached_descendant) AS all_nodes
-            UNWIND all_nodes AS final_node
-            WITH final_node WHERE final_node IS NOT NULL AND final_node.content IS NOT NULL AND final_node.content <> ""
-            RETURN DISTINCT final_node.name AS name, final_node.content AS content
+            RETURN nodes(path) as path_nodes
         """
-        result = tx.run(query, node_id=node_id)
-        return [dict(record) for record in result]
+        path_result = tx.run(path_query, node_id=node_id).single()
+        if not path_result:
+            return []
+
+        ordered_ancestors = path_result['path_nodes']
+        
+        full_context_data = []
+        current_path_slug = ""
+
+        for node in ordered_ancestors:
+            ancestor_id = node['id']
+            node_name = node['name']
+            node_content = node.get('content', '')
+
+            # Build the human-readable path for the header
+            if ancestor_id == 'root':
+                current_path_slug = f"/{node_name}"
+            else:
+                # This ensures the slug doesn't get repeated from the previous loop iteration
+                path_parts = current_path_slug.split(' / ')
+                if path_parts[-1] != node_name:
+                    current_path_slug += f" / {node_name}"
+
+            # Add the main ancestor's content if it exists
+            if node_content and node_content.strip():
+                full_context_data.append({
+                    "path": current_path_slug,
+                    "content": node_content
+                })
+
+            # Get content from all articles within this ancestor's attached folders
+            attached_content_query = """
+                MATCH (ancestor:ContextItem {id: $ancestor_id})-[:PARENT_OF]->(attached_folder:ContextItem {is_attached: true})
+                MATCH (attached_folder)-[:PARENT_OF*0..]->(article)
+                WHERE article.is_folder = false AND article.content IS NOT NULL AND article.content <> ""
+                RETURN article.name as name, article.content as content
+            """
+            attached_results = tx.run(attached_content_query, ancestor_id=ancestor_id)
+            for record in attached_results:
+                attached_path = f"{current_path_slug} (attached: {record['name']})"
+                full_context_data.append({
+                    "path": attached_path,
+                    "content": record['content']
+                })
+
+        return full_context_data
 
     with driver.session() as session:
-        context_data = session.read_transaction(fetch_context, node_id)
+        context_data = session.read_transaction(fetch_context_ordered, node_id)
         
-        # Create a dictionary to ensure uniqueness by name, preserving the last seen content
-        unique_context = {item['name']: item for item in context_data}
-        # Convert back to a list
-        unique_context_list = list(unique_context.values())
-
-        full_context = "\n\n---\n\n".join(
-            [f"# CONTEXT: {item['name']}\n\n{item['content']}" for item in unique_context_list]
-        )
+        output_parts = []
+        for item in context_data:
+            header = f"### Path: `{item['path']}`"
+            content = item['content']
+            output_parts.append(f"{header}\n\n{content}")
+            
+        full_context = "\n\n---\n\n".join(output_parts)
         return jsonify({'context': full_context})
 
 
