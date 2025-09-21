@@ -14,7 +14,7 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 
 # --- Neo4j Connection ---
 uri = os.getenv("NEO4J_URI")
-user = os.getenv("NEO4J_USER") # This was the line that caused the previous crash
+user = os.getenv("NEO4J_USER")
 password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver(uri, auth=basic_auth(user, password))
 
@@ -156,21 +156,34 @@ def delete_node(node_id):
 @app.route('/api/context/<node_id>', methods=['GET'])
 def get_context(node_id):
     def fetch_context(tx, node_id):
+        # **CORRECTED CYPHER QUERY**
         query = """
-        MATCH (start_node:ContextItem {id: $node_id})
-        MATCH path = (root:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(start_node)
-        WITH nodes(path) AS context_nodes
-        UNWIND context_nodes AS node
-        RETURN DISTINCT node.name AS name, node.content AS content
+            MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
+            WITH nodes(path) AS ancestors
+            UNWIND ancestors AS ancestor
+            OPTIONAL MATCH (ancestor)-[:PARENT_OF]->(attached_folder:ContextItem {is_attached: true})
+            OPTIONAL MATCH (attached_folder)-[:PARENT_OF*0..]->(attached_descendant)
+            WITH collect(DISTINCT ancestor) + collect(DISTINCT attached_descendant) AS all_nodes
+            UNWIND all_nodes AS final_node
+            WITH final_node WHERE final_node IS NOT NULL AND final_node.content IS NOT NULL AND final_node.content <> ""
+            RETURN DISTINCT final_node.name AS name, final_node.content AS content
         """
         result = tx.run(query, node_id=node_id)
         return [dict(record) for record in result]
+
     with driver.session() as session:
         context_data = session.read_transaction(fetch_context, node_id)
+        
+        # Create a dictionary to ensure uniqueness by name, preserving the last seen content
+        unique_context = {item['name']: item for item in context_data}
+        # Convert back to a list
+        unique_context_list = list(unique_context.values())
+
         full_context = "\n\n---\n\n".join(
-            [f"# CONTEXT: {item['name']}\n\n{item['content']}" for item in context_data if item['content']]
+            [f"# CONTEXT: {item['name']}\n\n{item['content']}" for item in unique_context_list]
         )
         return jsonify({'context': full_context})
+
 
 @app.route('/api/upload/<node_id>', methods=['POST'])
 def upload_file_to_node(node_id):
