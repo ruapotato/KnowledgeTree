@@ -248,24 +248,29 @@ function initIndexPage() {
             items.forEach(item => {
                 const itemEl = document.createElement('div');
                 itemEl.className = 'search-item';
-                if (item.is_folder) {
-                    itemEl.classList.add('is-folder');
-                }
                 itemEl.dataset.id = item.id;
-                itemEl.dataset.name = item.name;
-                itemEl.dataset.isFolder = item.is_folder;
                 
                 let iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
-                itemEl.innerHTML = `<i class="${iconClass}"></i><span>${item.name}</span>`;
+                let pathParts = item.full_path.split(' / ');
+                let itemName = pathParts.pop(); // The item's own name is the last part
+                let parentPath = pathParts.join(' / ');
+
+                itemEl.innerHTML = `
+                    <div>
+                        <span class="search-item-name"><i class="${iconClass}"></i> ${itemName}</span>
+                        <div class="search-item-path">${parentPath}</div>
+                    </div>
+                `;
                 
                 itemEl.addEventListener('click', async () => {
                     if (item.is_folder) {
-                        // To navigate to a folder, we need its full path
-                        const pathResponse = await fetch(`/api/path/${item.id}`);
-                        const pathData = await pathResponse.json();
-                        const newPath = pathData.slice(1).map(p => p.name);
-                        navigateToPath(newPath);
+                        navigateToPath(pathParts);
                     } else {
+                        // **THE FIX**: Manually set the history state to the parent folder
+                        // before navigating to the view page.
+                        const parentUrl = pathParts.map(p => encodeURIComponent(p)).join('/');
+                        history.pushState({ path: pathParts }, "", `/#/${parentUrl}`);
+                        // Now navigate to the actual item
                         window.location.href = `/view/${item.id}`;
                     }
                 });

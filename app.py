@@ -93,15 +93,26 @@ def search_nodes():
         return jsonify([])
 
     with driver.session() as session:
-        # This query now uses native Cypher to find descendant nodes
-        # instead of relying on the APOC plugin.
         result = session.run("""
-            MATCH (startNode:ContextItem {id: $start_node_id})-[:PARENT_OF*0..]->(node)
+            MATCH path = (startNode:ContextItem {id: $start_node_id})-[:PARENT_OF*0..]->(node)
             WHERE toLower(node.name) CONTAINS toLower($query) OR toLower(node.content) CONTAINS toLower($query)
-            RETURN node.id as id, node.name as name, node.is_folder as is_folder
+            RETURN node.id as id,
+                   node.name as name,
+                   node.is_folder as is_folder,
+                   [n IN nodes(path) | n.name] AS path_names
             LIMIT 25
             """, {'start_node_id': start_node_id, 'query': query})
-        return jsonify([dict(record) for record in result])
+        
+        # Process the results to create a full path string
+        processed_results = []
+        for record in result:
+            record_dict = dict(record)
+            # Join the path names, skipping the "KnowledgeTree Root"
+            full_path = " / ".join(record_dict['path_names'][1:])
+            record_dict['full_path'] = full_path
+            processed_results.append(record_dict)
+
+        return jsonify(processed_results)
 
 @app.route('/api/resolve_path', methods=['POST'])
 def resolve_path():
@@ -325,24 +336,26 @@ def run_job(job_name):
 @app.route('/api/admin/export', methods=['GET'])
 def export_user_data():
     try:
+        export_file_path = "export.json"
         with driver.session() as session:
-            # This query finds all nodes and relationships that are NOT read-only
-            # and exports them to a file on the server.
-            result = session.run("""
-                MATCH (n) WHERE n.read_only IS NULL OR n.read_only = false
-                OPTIONAL MATCH (n)-[r]->(m) WHERE m.read_only IS NULL OR m.read_only = false
-                WITH COLLECT(n) as nodes, COLLECT(r) as rels
-                CALL apoc.export.json.data(nodes, rels, 'export.json', {stream: true})
-                YIELD file, source, format, nodes, relationships, properties, time, rows, batchSize, batches, done, data
+            result = session.run(f"""
+                CALL apoc.export.json.query(
+                    'MATCH (n) WHERE n.read_only IS NULL OR n.read_only = false
+                     OPTIONAL MATCH (n)-[r]->(m) WHERE m.read_only IS NULL OR m.read_only = false
+                     RETURN n, r, m',
+                    "{export_file_path}", {{stream: true, writeNodeProperties: true}})
+                YIELD file
                 RETURN file
             """).single()
 
             if result and result['file']:
-                # The file is saved on the server by APOC. Now, send it to the client.
-                return send_file("export.json", as_attachment=True, download_name='knowledgetree_export.json')
+                return send_file(export_file_path, as_attachment=True, download_name='knowledgetree_export.json')
             else:
                  return jsonify({'success': False, 'error': 'Export failed or produced no data.'}), 500
     except Exception as e:
+        # Catch if APOC is not installed
+        if "Failed to invoke procedure `apoc.export.json.query`" in str(e):
+             return jsonify({'success': False, 'error': 'APOC extension not installed on Neo4j server.'}), 500
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -353,20 +366,19 @@ def import_user_data():
     file = request.files['file']
     if file:
         try:
-            # Save the uploaded file temporarily to be accessed by Neo4j
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'import_data.json')
             file.save(file_path)
 
             with driver.session() as session:
-                # Use APOC to import the JSON file
-                # The file path needs to be absolute for Neo4j to find it
                 session.run(f"""
                     CALL apoc.import.json("file://{os.path.abspath(file_path)}")
                 """)
 
-            os.remove(file_path) # Clean up the temporary file
+            os.remove(file_path)
             return jsonify({'success': True})
         except Exception as e:
+            if "Failed to invoke procedure `apoc.import.json`" in str(e):
+                return jsonify({'success': False, 'error': 'APOC extension not installed on Neo4j server.'}), 500
             return jsonify({'success': False, 'error': str(e)}), 500
     return jsonify({'error': 'File import failed'}), 500
 

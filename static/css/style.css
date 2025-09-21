@@ -88,7 +88,7 @@ header h1 {
     position: absolute;
     top: 100%;
     right: 0;
-    width: 300px;
+    width: 350px; /* Wider for full paths */
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: 6px;
@@ -97,21 +97,31 @@ header h1 {
     max-height: 400px;
     overflow-y: auto;
 }
-#search-results .search-item {
+.search-item {
     padding: 10px 15px;
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    border-bottom: 1px solid var(--border-color);
 }
-#search-results .search-item:hover {
+.search-item:last-child {
+    border-bottom: none;
+}
+.search-item:hover {
     background-color: var(--bg-color);
 }
-#search-results .search-item i {
-    color: var(--secondary-color);
+.search-item-name {
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
-#search-results .search-item.is-folder i {
-    color: var(--primary-color);
+.search-item-path {
+    font-size: 0.8rem;
+    color: var(--secondary-color);
+    margin-top: 4px;
+    padding-left: 24px; /* Align with text, not icon */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 
