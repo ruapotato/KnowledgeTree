@@ -10,20 +10,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // --- File Manager (Index Page) Logic ---
 function initIndexPage() {
-    // This entire function is correct and unchanged
     const fileBrowser = document.getElementById('file-browser');
     const breadcrumbNav = document.getElementById('breadcrumb');
     const contextMenu = document.getElementById('context-menu');
     const backBtn = document.getElementById('back-btn');
+    const searchInput = document.getElementById('search-input');
+    const searchResultsContainer = document.getElementById('search-results');
     
     let currentFolderId = null;
     let currentPathArray = [];
     let currentFolderIsAttached = false;
     let selectedItemId = null;
     let selectedItemType = { is_folder: false, is_attached: false };
+    let searchDebounceTimer;
 
     async function navigateToPath(pathArray, fromHistory = false) {
         let nodeId = 'root';
+        searchInput.value = ''; 
+        searchResultsContainer.style.display = 'none';
+        
         if (pathArray && pathArray.length > 0) {
             const response = await fetch('/api/resolve_path', {
                 method: 'POST',
@@ -68,6 +73,9 @@ function initIndexPage() {
         items.forEach(item => {
             const itemEl = document.createElement('div');
             itemEl.className = 'file-item';
+            if (item.read_only) {
+                itemEl.classList.add('read-only');
+            }
             itemEl.dataset.id = item.id;
             itemEl.dataset.isFolder = item.is_folder;
             itemEl.dataset.isAttached = item.is_attached || false;
@@ -158,6 +166,9 @@ function initIndexPage() {
         if (!contextMenu.contains(e.target)) {
             contextMenu.style.display = 'none';
         }
+        if (!searchResultsContainer.contains(e.target) && e.target !== searchInput) {
+            searchResultsContainer.style.display = 'none';
+        }
     });
     
     async function createNewItem(isFolder, isAttached = false) {
@@ -222,28 +233,76 @@ function initIndexPage() {
         }
     });
 
+    async function performSearch(query) {
+        if (!query || query.length < 2) {
+            searchResultsContainer.style.display = 'none';
+            return;
+        }
+        const response = await fetch(`/api/search?query=${encodeURIComponent(query)}&start_node_id=${currentFolderId}`);
+        const items = await response.json();
+        
+        searchResultsContainer.innerHTML = '';
+        if (items.length === 0) {
+            searchResultsContainer.innerHTML = '<div class="search-item">No results found.</div>';
+        } else {
+            items.forEach(item => {
+                const itemEl = document.createElement('div');
+                itemEl.className = 'search-item';
+                if (item.is_folder) {
+                    itemEl.classList.add('is-folder');
+                }
+                itemEl.dataset.id = item.id;
+                itemEl.dataset.name = item.name;
+                itemEl.dataset.isFolder = item.is_folder;
+                
+                let iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
+                itemEl.innerHTML = `<i class="${iconClass}"></i><span>${item.name}</span>`;
+                
+                itemEl.addEventListener('click', async () => {
+                    if (item.is_folder) {
+                        // To navigate to a folder, we need its full path
+                        const pathResponse = await fetch(`/api/path/${item.id}`);
+                        const pathData = await pathResponse.json();
+                        const newPath = pathData.slice(1).map(p => p.name);
+                        navigateToPath(newPath);
+                    } else {
+                        window.location.href = `/view/${item.id}`;
+                    }
+                });
+                searchResultsContainer.appendChild(itemEl);
+            });
+        }
+        searchResultsContainer.style.display = 'block';
+    }
+    
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            performSearch(searchInput.value.trim());
+        }, 300); // Debounce for 300ms
+    });
+
     const initialPath = window.location.hash.substring(2).split('/').filter(p => p).map(p => decodeURIComponent(p));
     navigateToPath(initialPath, true);
     history.replaceState({ path: initialPath }, "", `/#/${initialPath.map(p=>encodeURIComponent(p)).join('/')}`);
 }
 
-
 // --- View Page Logic ---
 function initViewPage() {
     const nodeNameEl = document.getElementById('node-name');
     const contentDisplayEl = document.getElementById('content-display');
+    const editorContainerEl = document.getElementById('editor-container');
     const saveBtn = document.getElementById('save-btn');
     const exportBtn = document.getElementById('export-context-btn');
     const uploadBtn = document.getElementById('upload-btn');
     const fileListEl = document.getElementById('file-list');
 
-    // **NEW**: Initialize Toast UI Editor
     const editor = new toastui.Editor({
         el: document.querySelector('#editor'),
         height: '600px',
-        initialEditType: 'wysiwyg', // Start in rich-text mode
+        initialEditType: 'wysiwyg',
         previewStyle: 'tab',
-        usageStatistics: false // Disables data collection
+        usageStatistics: false
     });
 
     async function loadNodeData() {
@@ -252,9 +311,11 @@ function initViewPage() {
         
         nodeNameEl.textContent = data.name;
         contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Edit to add some.</p>';
-        
-        // **NEW**: Set content in the new editor
         editor.setMarkdown(data.content || '');
+
+        if (data.read_only) {
+            editorContainerEl.style.display = 'none';
+        }
 
         if (data.is_folder) {
             document.body.classList.add('is-folder');
@@ -279,7 +340,6 @@ function initViewPage() {
     }
 
     saveBtn.addEventListener('click', async () => {
-        // **NEW**: Get content from the new editor
         const content = editor.getMarkdown();
         
         await fetch(`/api/node/${NODE_ID}`, {
@@ -288,7 +348,7 @@ function initViewPage() {
             body: JSON.stringify({ content: content })
         });
         alert('Content saved!');
-        loadNodeData(); // Refresh displayed content
+        loadNodeData();
     });
 
     exportBtn.addEventListener('click', async () => {

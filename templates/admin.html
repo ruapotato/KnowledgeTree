@@ -14,12 +14,49 @@
         </header>
         <main>
             <div class="admin-action">
-                <h2>Database Reset</h2>
-                <p>This will permanently delete all folders, articles, and attachments in the database and create a new, empty root folder. This is the recommended fix for data corruption or lingering items from a previous version.</p>
+                <h2><i class="fas fa-database"></i> Database Management</h2>
+                <p>This will permanently delete all folders, articles, and attachments in the database and create a new, empty root folder.</p>
                 <button id="reinit-db-btn" class="danger-btn">
                     <i class="fas fa-skull-crossbones"></i> Wipe and Re-initialize Database
                 </button>
             </div>
+
+            <div class="admin-action">
+                <h2><i class="fas fa-file-export"></i> Export/Import User Data</h2>
+                <p>Export all user-created (non-read-only) data to a JSON file. This can be used as a backup before re-initializing the database.</p>
+                <button id="export-data-btn" class="button">
+                    <i class="fas fa-download"></i> Export User Data
+                </button>
+                <hr>
+                <p>Import data from a previously exported JSON file. This will merge the data into the current database.</p>
+                <input type="file" id="import-file-input" accept=".json">
+                <button id="import-data-btn" class="button">
+                    <i class="fas fa-upload"></i> Import User Data
+                </button>
+            </div>
+
+            <div class="admin-action">
+                <h2><i class="fas fa-cogs"></i> Scheduler Settings</h2>
+                <form id="settings-form">
+                    <div class="form-group">
+                        <label for="freshservice-interval">Freshservice Pull Interval (minutes)</label>
+                        <input type="number" id="freshservice-interval" value="{{ settings.FRESHSERVICE_PULL_INTERVAL }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="datto-interval">Datto RMM Pull Interval (minutes)</label>
+                        <input type="number" id="datto-interval" value="{{ settings.DATTO_PULL_INTERVAL }}">
+                    </div>
+                    <button type="submit" class="button">Save Settings</button>
+                </form>
+            </div>
+
+            <div class="admin-action">
+                <h2><i class="fas fa-sync"></i> Manual Sync</h2>
+                <p>Manually trigger data sync jobs. View the console for logs.</p>
+                <button id="run-freshservice" class="button"><i class="fas fa-sync"></i> Run Freshservice Sync</button>
+                <button id="run-datto" class="button"><i class="fas fa-sync"></i> Run Datto RMM Sync</button>
+            </div>
+
             <a href="/" class="back-link-admin"><i class="fas fa-arrow-left"></i> Back to KnowledgeTree</a>
         </main>
     </div>

@@ -148,8 +148,8 @@ def sync_datto_devices():
                 session.run("""
                     MATCH (assets_folder:ContextItem {id: 'assets_for_' + $account_number})
                     MERGE (computer_md:ContextItem {id: $datto_uid, name: $hostname, is_folder: false, datto_uid: $datto_uid})
-                    ON CREATE SET computer_md.content = $content
-                    ON MATCH SET computer_md.content = $content
+                    ON CREATE SET computer_md.content = $content, computer_md.read_only = true
+                    ON MATCH SET computer_md.content = $content, computer_md.read_only = true
                     MERGE (assets_folder)-[:PARENT_OF]->(computer_md)
                 """, account_number=account_number, datto_uid=datto_uid, hostname=f"{hostname}.md", content=computer_md_content)
 

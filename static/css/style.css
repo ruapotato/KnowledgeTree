@@ -6,12 +6,13 @@
     --text-color: #343a40;
     --primary-color: #007bff;
     --secondary-color: #6c757d;
-    --attached-color: #28a745; 
+    --attached-color: #28a745;
     --danger-color: #dc3545;
     --border-color: #dee2e6;
     --card-bg: #ffffff;
     --shadow: 0 4px 6px rgba(0,0,0,0.07);
     --icon-size: 48px;
+    --readonly-color: #6f42c1; /* Purplish color */
 }
 
 body {
@@ -49,6 +50,7 @@ header h1 {
     border-radius: 6px;
     margin-bottom: 2rem;
     padding: 0.5rem;
+    position: relative; /* For search results positioning */
 }
 
 #back-btn {
@@ -73,6 +75,45 @@ header h1 {
 }
 #breadcrumb a { text-decoration: none; color: var(--primary-color); }
 #breadcrumb span { margin: 0 0.5rem; color: var(--secondary-color); }
+
+#search-input {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.5rem;
+    width: 250px;
+}
+
+/* Search Results */
+#search-results {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 300px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    z-index: 1001;
+    max-height: 400px;
+    overflow-y: auto;
+}
+#search-results .search-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+#search-results .search-item:hover {
+    background-color: var(--bg-color);
+}
+#search-results .search-item i {
+    color: var(--secondary-color);
+}
+#search-results .search-item.is-folder i {
+    color: var(--primary-color);
+}
+
 
 /* File Browser */
 #file-browser-container { min-height: 50vh; }
@@ -104,7 +145,19 @@ header h1 {
 .file-item .fa-folder { color: var(--primary-color); }
 .file-item .fa-file-alt { color: var(--secondary-color); }
 .file-item .fa-paperclip { color: var(--attached-color); }
-.file-item .name { word-break: break-all; font-size: 0.9rem; }
+.file-item .name {
+    word-break: break-all;
+    font-size: 0.9rem;
+    color: var(--text-color); /* Regular file text color */
+}
+.file-item.read-only i {
+    color: var(--readonly-color);
+}
+.file-item.read-only .name {
+    color: var(--readonly-color);
+    font-weight: 600;
+}
+
 
 /* Context Menu */
 .context-menu {
@@ -167,6 +220,19 @@ button:hover { background-color: #0056b3; }
     margin-top: 1rem;
     text-decoration: none;
     color: var(--primary-color);
+}
+.form-group {
+    margin-bottom: 1rem;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+}
+.form-group input {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
 }
 
 footer {

@@ -150,8 +150,8 @@ def sync_companies_and_users():
                         MERGE (user_folder:ContextItem {id: $user_email, name: $user_name, is_folder: true, user_email: $user_email})
                         MERGE (users_root)-[:PARENT_OF]->(user_folder)
                         MERGE (contact_md:ContextItem {id: 'contact_for_' + $user_email, name: 'Contact.md', is_folder: false, user_email: $user_email})
-                        ON CREATE SET contact_md.content = $content
-                        ON MATCH SET contact_md.content = $content
+                        ON CREATE SET contact_md.content = $content, contact_md.read_only = true
+                        ON MATCH SET contact_md.content = $content, contact_md.read_only = true
                         MERGE (user_folder)-[:PARENT_OF]->(contact_md)
                     """, account_number=account_number, user_name=user_name, user_email=user_email, content=contact_md_content)
                     break 

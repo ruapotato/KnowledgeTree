@@ -4,9 +4,10 @@ import uuid
 import schedule
 import time
 import threading
+import json
 from urllib.parse import unquote
 from dotenv import load_dotenv, set_key
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, send_file
 from neo4j import GraphDatabase, basic_auth
 import markdown
 from scripts.pull_freshservice import sync_companies_and_users
@@ -72,19 +73,36 @@ def uploaded_file(filename):
 # --- Admin Routes ---
 @app.route('/admin')
 def admin_panel():
-    return render_template('admin.html')
+    settings = {
+        'FRESHSERVICE_PULL_INTERVAL': os.getenv('FRESHSERVICE_PULL_INTERVAL', 1440),
+        'DATTO_PULL_INTERVAL': os.getenv('DATTO_PULL_INTERVAL', 1440)
+    }
+    return render_template('admin.html', settings=settings)
 
 @app.route('/admin/settings')
 def admin_settings():
-    # Pass current settings to the template
-    settings = {
-        'FRESHSERVICE_PULL_INTERVAL': os.getenv('FRESHSERVICE_PULL_INTERVAL'),
-        'DATTO_PULL_INTERVAL': os.getenv('DATTO_PULL_INTERVAL')
-    }
-    return render_template('admin_settings.html', settings=settings)
+    return redirect('/admin')
 
 # --- API Endpoints ---
-# (Existing API endpoints remain the same)
+@app.route('/api/search', methods=['GET'])
+def search_nodes():
+    query = request.args.get('query', '')
+    start_node_id = request.args.get('start_node_id', 'root')
+
+    if not query:
+        return jsonify([])
+
+    with driver.session() as session:
+        # This query now uses native Cypher to find descendant nodes
+        # instead of relying on the APOC plugin.
+        result = session.run("""
+            MATCH (startNode:ContextItem {id: $start_node_id})-[:PARENT_OF*0..]->(node)
+            WHERE toLower(node.name) CONTAINS toLower($query) OR toLower(node.content) CONTAINS toLower($query)
+            RETURN node.id as id, node.name as name, node.is_folder as is_folder
+            LIMIT 25
+            """, {'start_node_id': start_node_id, 'query': query})
+        return jsonify([dict(record) for record in result])
+
 @app.route('/api/resolve_path', methods=['POST'])
 def resolve_path():
     path_parts = request.json.get('path', [])
@@ -94,13 +112,16 @@ def resolve_path():
         query = "MATCH (n0:ContextItem {id: 'root'})"
         match_clauses = []
         where_clauses = []
+        params = {}
         for i, part in enumerate(path_parts):
             prev_node, curr_node = f"n{i}", f"n{i+1}"
+            param_name = f"part_{i}"
             match_clauses.append(f"MATCH ({prev_node})-[:PARENT_OF]->({curr_node})")
-            where_clauses.append(f"{curr_node}.name = ${i}")
+            where_clauses.append(f"{curr_node}.name = ${param_name}")
+            params[param_name] = part
         full_query = "\n".join([query] + match_clauses) + "\nWHERE " + " AND ".join(where_clauses) + f"\nRETURN n{len(path_parts)}.id as id"
-        params = {str(i): part for i, part in enumerate(path_parts)}
         result = session.run(full_query, params).single()
+
     if result:
         return jsonify({'id': result['id']})
     else:
@@ -111,7 +132,7 @@ def get_nodes_in_folder(parent_id):
     with driver.session() as session:
         query = """
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
-            RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, child.is_attached as is_attached
+            RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, child.is_attached as is_attached, child.read_only as read_only
             ORDER BY child.is_folder DESC, child.name
         """
         result = session.run(query, parent_id=parent_id)
@@ -136,16 +157,14 @@ def get_node(node_id):
         query = """
         MATCH (n:ContextItem {id: $node_id})
         OPTIONAL MATCH (n)-[:HAS_FILE]->(f:File)
-        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder, n.is_attached as is_attached,
+        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder, n.is_attached as is_attached, n.read_only as read_only,
                collect({id: f.id, filename: f.filename}) AS files
         """
         result = tx.run(query, node_id=node_id).single()
         if result:
             data = dict(result)
-            # --- THIS IS THE FIX ---
             content = data.get('content') or ''
             data['content_html'] = markdown.markdown(content, extensions=['fenced_code', 'tables'])
-            # --- END OF FIX ---
             data['files'] = [file for file in data.get('files', []) if file and file.get('id')]
             return data
         return None
@@ -162,12 +181,12 @@ def create_node():
     is_attached = data.get('is_attached', False)
     new_id = str(uuid.uuid4())
     with driver.session() as session:
-        parent_is_attached = session.run("MATCH (p:ContextItem {id: $id}) RETURN p.is_attached as attached", id=parent_id).single()['attached']
-        if parent_is_attached and is_folder and not is_attached:
-             return jsonify({'error': 'Only attached folders or knowledge articles can be created here.'}), 400
+        parent_is_attached_result = session.run("MATCH (p:ContextItem {id: $id}) RETURN p.is_attached as attached", id=parent_id).single()
+        if parent_is_attached_result and parent_is_attached_result['attached'] and is_folder and not is_attached:
+            return jsonify({'error': 'Only attached folders or knowledge articles can be created here.'}), 400
         session.run("""
             MATCH (parent:ContextItem {id: $parent_id})
-            CREATE (child:ContextItem {id: $id, name: $name, is_folder: $is_folder, content: '', is_attached: $is_attached})
+            CREATE (child:ContextItem {id: $id, name: $name, is_folder: $is_folder, content: '', is_attached: $is_attached, read_only: false})
             CREATE (parent)-[:PARENT_OF]->(child)
         """, parent_id=parent_id, id=new_id, name=name, is_folder=is_folder, is_attached=is_attached)
     return jsonify({'success': True, 'id': new_id, 'name': name, 'is_folder': is_folder, 'is_attached': is_attached})
@@ -195,7 +214,6 @@ def delete_node(node_id):
 @app.route('/api/context/<node_id>', methods=['GET'])
 def get_context(node_id):
     def fetch_context_ordered(tx, node_id):
-        # 1. Get the ordered ancestor path from root to the target node
         path_query = """
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
             RETURN nodes(path) as path_nodes
@@ -214,23 +232,19 @@ def get_context(node_id):
             node_name = node['name']
             node_content = node.get('content', '')
 
-            # Build the human-readable path for the header
             if ancestor_id == 'root':
                 current_path_slug = f"/{node_name}"
             else:
-                # This ensures the slug doesn't get repeated from the previous loop iteration
                 path_parts = current_path_slug.split(' / ')
                 if path_parts[-1] != node_name:
                     current_path_slug += f" / {node_name}"
 
-            # Add the main ancestor's content if it exists
             if node_content and node_content.strip():
                 full_context_data.append({
                     "path": current_path_slug,
                     "content": node_content
                 })
 
-            # Get content from all articles within this ancestor's attached folders
             attached_content_query = """
                 MATCH (ancestor:ContextItem {id: $ancestor_id})-[:PARENT_OF]->(attached_folder:ContextItem {is_attached: true})
                 MATCH (attached_folder)-[:PARENT_OF*0..]->(article)
@@ -244,7 +258,6 @@ def get_context(node_id):
                     "path": attached_path,
                     "content": record['content']
                 })
-
         return full_context_data
 
     with driver.session() as session:
@@ -288,14 +301,12 @@ def reinitialize_db():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# New API endpoints for admin settings
 @app.route('/api/admin/save_settings', methods=['POST'])
 def save_settings():
     settings = request.json
     for key, value in settings.items():
         set_key('.env', key, value)
     
-    # Reschedule jobs
     schedule.clear()
     setup_scheduler()
     
@@ -311,16 +322,61 @@ def run_job(job_name):
         return jsonify({'success': True, 'message': 'Datto sync started.'})
     return jsonify({'success': False, 'error': 'Invalid job name.'}), 400
 
+@app.route('/api/admin/export', methods=['GET'])
+def export_user_data():
+    try:
+        with driver.session() as session:
+            # This query finds all nodes and relationships that are NOT read-only
+            # and exports them to a file on the server.
+            result = session.run("""
+                MATCH (n) WHERE n.read_only IS NULL OR n.read_only = false
+                OPTIONAL MATCH (n)-[r]->(m) WHERE m.read_only IS NULL OR m.read_only = false
+                WITH COLLECT(n) as nodes, COLLECT(r) as rels
+                CALL apoc.export.json.data(nodes, rels, 'export.json', {stream: true})
+                YIELD file, source, format, nodes, relationships, properties, time, rows, batchSize, batches, done, data
+                RETURN file
+            """).single()
+
+            if result and result['file']:
+                # The file is saved on the server by APOC. Now, send it to the client.
+                return send_file("export.json", as_attachment=True, download_name='knowledgetree_export.json')
+            else:
+                 return jsonify({'success': False, 'error': 'Export failed or produced no data.'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/admin/import', methods=['POST'])
+def import_user_data():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file:
+        try:
+            # Save the uploaded file temporarily to be accessed by Neo4j
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'import_data.json')
+            file.save(file_path)
+
+            with driver.session() as session:
+                # Use APOC to import the JSON file
+                # The file path needs to be absolute for Neo4j to find it
+                session.run(f"""
+                    CALL apoc.import.json("file://{os.path.abspath(file_path)}")
+                """)
+
+            os.remove(file_path) # Clean up the temporary file
+            return jsonify({'success': True})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'error': 'File import failed'}), 500
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
     
-    # Start the scheduler
     setup_scheduler()
     stop_run_continuously = run_continuously()
     
     app.run(debug=True, port=5001)
     
-    # Stop the scheduler thread when the app is closed
     stop_run_continuously.set()
