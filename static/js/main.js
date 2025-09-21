@@ -15,14 +15,14 @@ function initIndexPage() {
     const backBtn = document.getElementById('back-btn');
     
     let currentFolderId = null;
-    let currentPath = [];
+    let currentPathArray = []; // Stores the array of names ['Folder A', 'Subfolder B']
     let currentFolderIsAttached = false;
     let selectedItemId = null;
     let selectedItemType = { is_folder: false, is_attached: false };
 
     async function navigateToPath(pathArray, fromHistory = false) {
         let nodeId = 'root';
-        if (pathArray.length > 0) {
+        if (pathArray && pathArray.length > 0) {
             const response = await fetch('/api/resolve_path', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -30,7 +30,7 @@ function initIndexPage() {
             });
             if (!response.ok) {
                 console.error("Path not found, redirecting to root.");
-                navigateToPath([], fromHistory); // Go to root if path is invalid
+                navigateToPath([], fromHistory);
                 return;
             }
             const data = await response.json();
@@ -39,17 +39,18 @@ function initIndexPage() {
 
         currentFolderId = nodeId;
         selectedItemId = null;
+        currentPathArray = pathArray || [];
 
         if (!fromHistory) {
-            const urlPath = pathArray.map(p => encodeURIComponent(p)).join('/');
-            history.pushState({ path: pathArray }, "", `/#/${urlPath}`);
+            const urlPath = currentPathArray.map(p => encodeURIComponent(p)).join('/');
+            history.pushState({ path: currentPathArray }, "", `/#/${urlPath}`);
         }
         
         const nodeDataResponse = await fetch(`/api/node/${nodeId}`);
         const nodeData = await nodeDataResponse.json();
         currentFolderIsAttached = nodeData.is_attached || false;
         
-        backBtn.disabled = (pathArray.length === 0);
+        backBtn.disabled = (currentPathArray.length === 0);
 
         await Promise.all([
             renderItems(nodeId),
@@ -80,15 +81,12 @@ function initIndexPage() {
                 document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
                 itemEl.classList.add('selected');
                 selectedItemId = item.id;
-                selectedItemType = { 
-                    is_folder: item.is_folder, 
-                    is_attached: item.is_attached || false 
-                };
+                selectedItemType = { is_folder: item.is_folder, is_attached: item.is_attached || false };
             });
 
             itemEl.addEventListener('dblclick', () => {
                 if (item.is_folder) {
-                    const newPath = [...currentPath, item.name];
+                    const newPath = [...currentPathArray, item.name];
                     navigateToPath(newPath);
                 } else {
                     window.location.href = `/view/${item.id}`;
@@ -102,16 +100,14 @@ function initIndexPage() {
     async function renderBreadcrumb(folderId) {
         const response = await fetch(`/api/path/${folderId}`);
         const pathData = await response.json();
-        currentPath = pathData.map(p => p.name).slice(1);
 
         breadcrumbNav.innerHTML = '';
         pathData.forEach((segment, index) => {
             const pathSlice = pathData.slice(1, index + 1).map(p => p.name);
-            const urlSlice = pathSlice.map(p => encodeURIComponent(p)).join('/');
             
             if (index < pathData.length - 1) {
                 const link = document.createElement('a');
-                link.href = `/#/${urlSlice}`;
+                link.href = '#'; // Let click handler manage navigation
                 link.textContent = segment.name;
                 link.onclick = (e) => { e.preventDefault(); navigateToPath(pathSlice); };
                 breadcrumbNav.appendChild(link);
@@ -209,7 +205,8 @@ function initIndexPage() {
     document.getElementById('context-open').onclick = () => {
         if (selectedItemId) {
             if (selectedItemType.is_folder) {
-                const newPath = [...currentPath, document.querySelector(`.file-item[data-id="${selectedItemId}"] .name`).textContent];
+                const itemName = document.querySelector(`.file-item[data-id="${selectedItemId}"] .name`).textContent;
+                const newPath = [...currentPathArray, itemName];
                 navigateToPath(newPath);
             }
             else window.location.href = `/view/${selectedItemId}`;
@@ -229,6 +226,7 @@ function initIndexPage() {
 }
 
 function initViewPage() {
+    // This entire function is complete and correct from the previous version.
     const nodeNameEl = document.getElementById('node-name');
     const contentDisplayEl = document.getElementById('content-display');
     const saveBtn = document.getElementById('save-btn');

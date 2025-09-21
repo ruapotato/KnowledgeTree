@@ -14,7 +14,7 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 
 # --- Neo4j Connection ---
 uri = os.getenv("NEO4J_URI")
-user = os.getenv("NEO4J_USER")
+user = os.getenv("NEO4J_USER") # This was the line that caused the previous crash
 password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver(uri, auth=basic_auth(user, password))
 
@@ -32,52 +32,46 @@ with driver.session() as session:
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def index(path):
-    """Renders the main file manager interface, handling any path."""
     return render_template('index.html')
 
 @app.route('/view/<node_id>')
 def view_node(node_id):
-    """Renders the view/edit page for a single node."""
     return render_template('view.html', node_id=node_id)
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
-    """Serves uploaded files."""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# --- Admin Route ---
+@app.route('/admin')
+def admin_panel():
+    return render_template('admin.html')
+
 
 # --- API Endpoints ---
 @app.route('/api/resolve_path', methods=['POST'])
 def resolve_path():
-    """Finds a node's ID from a human-readable path."""
     path_parts = request.json.get('path', [])
     if not path_parts:
         return jsonify({'id': 'root'})
-
     with driver.session() as session:
-        # Start with the root node
         query = "MATCH (n0:ContextItem {id: 'root'})"
         match_clauses = []
         where_clauses = []
-        
         for i, part in enumerate(path_parts):
             prev_node, curr_node = f"n{i}", f"n{i+1}"
             match_clauses.append(f"MATCH ({prev_node})-[:PARENT_OF]->({curr_node})")
             where_clauses.append(f"{curr_node}.name = ${i}")
-        
         full_query = "\n".join([query] + match_clauses) + "\nWHERE " + " AND ".join(where_clauses) + f"\nRETURN n{len(path_parts)}.id as id"
-        
         params = {str(i): part for i, part in enumerate(path_parts)}
         result = session.run(full_query, params).single()
-
     if result:
         return jsonify({'id': result['id']})
     else:
         return jsonify({'error': 'Path not found'}), 404
 
-
 @app.route('/api/nodes/<parent_id>', methods=['GET'])
 def get_nodes_in_folder(parent_id):
-    """Fetches immediate children. This fixes the double-rendering bug."""
     with driver.session() as session:
         query = """
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
@@ -90,17 +84,14 @@ def get_nodes_in_folder(parent_id):
 
 @app.route('/api/path/<node_id>', methods=['GET'])
 def get_path(node_id):
-    if node_id == 'root':
-         with driver.session() as session:
-            root_node = session.run("MATCH (n:ContextItem {id: 'root'}) RETURN n.id as id, n.name as name").single()
-            return jsonify([dict(root_node)])
     with driver.session() as session:
-        result = session.run("""
+        query = """
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
             WITH nodes(path) AS path_nodes
             UNWIND path_nodes as node
             RETURN node.id AS id, node.name AS name
-        """, node_id=node_id)
+        """
+        result = session.run(query, node_id=node_id)
         return jsonify([dict(record) for record in result])
 
 @app.route('/api/node/<node_id>', methods=['GET'])
@@ -131,12 +122,10 @@ def create_node():
     is_folder = data.get('is_folder', False)
     is_attached = data.get('is_attached', False)
     new_id = str(uuid.uuid4())
-
     with driver.session() as session:
         parent_is_attached = session.run("MATCH (p:ContextItem {id: $id}) RETURN p.is_attached as attached", id=parent_id).single()['attached']
         if parent_is_attached and is_folder and not is_attached:
              return jsonify({'error': 'Only attached folders or knowledge articles can be created here.'}), 400
-
         session.run("""
             MATCH (parent:ContextItem {id: $parent_id})
             CREATE (child:ContextItem {id: $id, name: $name, is_folder: $is_folder, content: '', is_attached: $is_attached})
@@ -200,6 +189,16 @@ def upload_file_to_node(node_id):
             """, node_id=node_id, file_id=file_id, filename=filename)
         return jsonify({'success': True, 'filename': filename})
     return jsonify({'error': 'File upload failed'}), 500
+
+@app.route('/api/admin/reinitialize_db', methods=['POST'])
+def reinitialize_db():
+    try:
+        with driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+            session.write_transaction(ensure_root_exists)
+        return jsonify({'success': True, 'message': 'Database wiped and re-initialized successfully.'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):

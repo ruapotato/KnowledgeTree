@@ -7,6 +7,7 @@
     --primary-color: #007bff;
     --secondary-color: #6c757d;
     --attached-color: #28a745; 
+    --danger-color: #dc3545;
     --border-color: #dee2e6;
     --card-bg: #ffffff;
     --shadow: 0 4px 6px rgba(0,0,0,0.07);
@@ -38,7 +39,7 @@ header h1 {
     text-align: center;
 }
 
-/* **NEW** Navigation Bar */
+/* Navigation Bar */
 .nav-bar {
     display: flex;
     align-items: center;
@@ -128,3 +129,47 @@ header h1 {
 .is-folder #editor-container, .is-folder #content-display { display: none; }
 button { background: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; transition: background-color 0.2s; }
 button:hover { background-color: #0056b3; }
+
+/* Admin Panel Styles */
+.admin-container {
+    max-width: 800px;
+}
+.admin-action {
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+}
+.admin-action h2 {
+    margin-top: 0;
+}
+.danger-btn {
+    background-color: var(--danger-color);
+    width: auto;
+    font-weight: 600;
+}
+.danger-btn:hover {
+    background-color: #c82333;
+}
+.back-link-admin {
+    display: inline-block;
+    margin-top: 1rem;
+    text-decoration: none;
+    color: var(--primary-color);
+}
+
+footer {
+    text-align: center;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+.admin-link {
+    font-size: 0.9rem;
+    color: var(--secondary-color);
+    text-decoration: none;
+}
+.admin-link:hover {
+    color: var(--primary-color);
+}

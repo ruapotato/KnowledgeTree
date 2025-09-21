@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Panel - KnowledgeTree</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <div class="container admin-container">
+        <header>
+            <h1><i class="fas fa-shield-halved"></i> Admin Panel</h1>
+            <p>Use these tools with caution. Changes are irreversible.</p>
+        </header>
+        <main>
+            <div class="admin-action">
+                <h2>Database Reset</h2>
+                <p>This will permanently delete all folders, articles, and attachments in the database and create a new, empty root folder. This is the recommended fix for data corruption or lingering items from a previous version.</p>
+                <button id="reinit-db-btn" class="danger-btn">
+                    <i class="fas fa-skull-crossbones"></i> Wipe and Re-initialize Database
+                </button>
+            </div>
+            <a href="/" class="back-link-admin"><i class="fas fa-arrow-left"></i> Back to KnowledgeTree</a>
+        </main>
+    </div>
+    <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+</body>
+</html>
