@@ -27,44 +27,37 @@ def ensure_root_exists(tx):
 with driver.session() as session:
     session.write_transaction(ensure_root_exists)
 
-# --- Main Routes (Unchanged) ---
-@app.route('/')
-def index():
+# --- Main Routes ---
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def index(path):
+    """Renders the main file manager interface, handling any path."""
     return render_template('index.html')
 
 @app.route('/view/<node_id>')
 def view_node(node_id):
+    """Renders the view/edit page for a single node."""
     return render_template('view.html', node_id=node_id)
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
+    """Serves uploaded files."""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # --- API Endpoints ---
 @app.route('/api/nodes/<parent_id>', methods=['GET'])
 def get_nodes_in_folder(parent_id):
-    """
-    Fetches items for the file browser.
-    - Fixes the double-render bug by using DISTINCT.
-    - Implements "paperclip" logic by including items from attached sub-folders.
-    """
     with driver.session() as session:
-        # This query gets all direct children, AND all children of "attached" folders one level deep.
         query = """
-            // Get all direct children
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
             RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, child.is_attached as is_attached
             UNION
-            // Also get the children from any attached folders
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(:ContextItem {is_attached: true})-[:PARENT_OF]->(grandchild)
             RETURN DISTINCT grandchild.id AS id, grandchild.name AS name, grandchild.is_folder AS is_folder, grandchild.is_attached as is_attached
         """
         result = session.run(query, parent_id=parent_id)
-        
-        # We need to sort in Python now since UNION prevents ORDER BY in the query
         records = [dict(record) for record in result]
         records.sort(key=lambda x: (not x.get('is_folder', False), x.get('name', '')))
-        
         return jsonify(records)
 
 @app.route('/api/path/<node_id>', methods=['GET'])
@@ -105,7 +98,6 @@ def get_node(node_id):
 
 @app.route('/api/node', methods=['POST'])
 def create_node():
-    """Creates a new node, handling attached folder logic."""
     data = request.json
     parent_id = data.get('parent_id', 'root')
     name = data.get('name')
@@ -114,12 +106,11 @@ def create_node():
     new_id = str(uuid.uuid4())
 
     with driver.session() as session:
-        # Enforce rule: only attached folders can be created in attached folders
         parent_is_attached = session.run("MATCH (p:ContextItem {id: $id}) RETURN p.is_attached as attached", id=parent_id).single()['attached']
-        if parent_is_attached and not is_attached:
-             return jsonify({'error': 'Only attached items can be created in an attached folder.'}), 400
-        if parent_is_attached and not is_folder:
-             return jsonify({'error': 'Only folders (not articles) can be created in an attached folder.'}), 400
+        
+        # **LOGIC CHANGE**: Only block creating a *regular folder* inside an attached folder.
+        if parent_is_attached and is_folder and not is_attached:
+             return jsonify({'error': 'Only attached folders or knowledge articles can be created in an attached folder.'}), 400
 
         session.run("""
             MATCH (parent:ContextItem {id: $parent_id})
@@ -128,8 +119,7 @@ def create_node():
         """, parent_id=parent_id, id=new_id, name=name, is_folder=is_folder, is_attached=is_attached)
     return jsonify({'success': True, 'id': new_id, 'name': name, 'is_folder': is_folder, 'is_attached': is_attached})
 
-# Unchanged functions: update_node, delete_node, get_context, upload_file_to_node, main execution block
-# ... (include the rest of the functions from the previous app.py here)
+
 @app.route('/api/node/<node_id>', methods=['PUT'])
 def update_node(node_id):
     data = request.json
