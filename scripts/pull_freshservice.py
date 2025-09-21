@@ -100,7 +100,7 @@ def sync_companies_and_users():
         # Create a 'Companies' root folder if it doesn't exist
         session.run("""
             MERGE (root:ContextItem {id: 'root'})
-            MERGE (companies:ContextItem {name: 'Companies', is_folder: true})
+            MERGE (companies:ContextItem {id: 'companies_root', name: 'Companies', is_folder: true})
             MERGE (root)-[:PARENT_OF]->(companies)
         """)
 
@@ -113,13 +113,11 @@ def sync_companies_and_users():
 
             # Create or update company folder and its own "Users" subfolder
             session.run("""
-                MATCH (companies_root:ContextItem {name: 'Companies'})
+                MATCH (companies_root:ContextItem {id: 'companies_root'})
                 MERGE (c:ContextItem {id: $account_number, name: $name, is_folder: true})
                 SET c.freshservice_id = $fs_id
                 MERGE (companies_root)-[:PARENT_OF]->(c)
-                MERGE (u_root:ContextItem {name: 'Users', is_folder: true})
-                // Ensure the Users folder has a unique ID tied to the company
-                SET u_root.id = 'users_for_' + $account_number
+                MERGE (u_root:ContextItem {id: 'users_for_' + $account_number, name: 'Users', is_folder: true})
                 MERGE (c)-[:PARENT_OF]->(u_root)
             """, account_number=str(account_number), name=company_name, fs_id=company.get('id'))
 
@@ -148,10 +146,10 @@ def sync_companies_and_users():
 """
                     # Correctly match the company's "Users" folder and create the user inside it
                     session.run("""
-                        MATCH (company:ContextItem {id: $account_number})-[:PARENT_OF]->(users_root:ContextItem {name: 'Users'})
-                        MERGE (user_folder:ContextItem {name: $user_name, is_folder: true, user_email: $user_email})
+                        MATCH (users_root:ContextItem {id: 'users_for_' + $account_number})
+                        MERGE (user_folder:ContextItem {id: $user_email, name: $user_name, is_folder: true, user_email: $user_email})
                         MERGE (users_root)-[:PARENT_OF]->(user_folder)
-                        MERGE (contact_md:ContextItem {name: 'Contact.md', is_folder: false, user_email: $user_email})
+                        MERGE (contact_md:ContextItem {id: 'contact_for_' + $user_email, name: 'Contact.md', is_folder: false, user_email: $user_email})
                         ON CREATE SET contact_md.content = $content
                         ON MATCH SET contact_md.content = $content
                         MERGE (user_folder)-[:PARENT_OF]->(contact_md)

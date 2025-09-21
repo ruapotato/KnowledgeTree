@@ -71,9 +71,9 @@ def find_user_for_device(session, company_id, device_hostname, device_descriptio
     """
     Attempts to associate a device with a user based on hostname or description.
     """
-    # 1. Check for full name in description
     users_in_company = session.run("""
         MATCH (:ContextItem {id: $company_id})-[:PARENT_OF]->(:ContextItem {name: 'Users'})-[:PARENT_OF]->(u:ContextItem)
+        WHERE u.is_folder = true
         RETURN u.name as name, u.user_email as email
     """, company_id=company_id)
 
@@ -83,18 +83,15 @@ def find_user_for_device(session, company_id, device_hostname, device_descriptio
         if user['name'].lower() in device_description.lower():
             return user['email']
 
-    # 2. Check for unique first name in description
-    first_names = [user['name'].split()[0].lower() for user in user_list]
+    first_names = [user['name'].split()[0].lower() for user in user_list if ' ' in user['name']]
     for user in user_list:
-        first_name = user['name'].split()[0].lower()
-        if first_name in device_description.lower() and first_names.count(first_name) == 1:
-            return user['email']
+        if ' ' in user['name']:
+            first_name = user['name'].split()[0].lower()
+            if first_name in device_description.lower() and first_names.count(first_name) == 1:
+                return user['email']
             
-    # 3. Check for unique first name in hostname
-    for user in user_list:
-        first_name = user['name'].split()[0].lower()
-        if first_name in device_hostname.lower() and first_names.count(first_name) == 1:
-            return user['email']
+            if first_name in device_hostname.lower() and first_names.count(first_name) == 1:
+                return user['email']
 
     return None
 
@@ -117,6 +114,13 @@ def sync_datto_devices():
                 continue
 
             print(f"Processing site: {site.get('name')} (Account: {account_number})")
+            
+            session.run("""
+                MATCH (company:ContextItem {id: $account_number})
+                MERGE (assets_folder:ContextItem {id: 'assets_for_' + $account_number, name: 'Assets', is_folder: true})
+                MERGE (company)-[:PARENT_OF]->(assets_folder)
+            """, account_number=account_number)
+
             devices = get_paginated_api_request(token, f"/v2/site/{site_uid}/devices")
             if not devices:
                 continue
@@ -124,10 +128,9 @@ def sync_datto_devices():
             for device in devices:
                 hostname = device.get('hostname', 'Unknown Device')
                 description = device.get('description', '')
-                user_email = find_user_for_device(session, str(account_number), hostname, description)
+                datto_uid = device.get('uid')
 
-                if user_email:
-                    computer_md_content = f"""
+                computer_md_content = f"""
 # Computer Information: {hostname}
 
 - **Operating System:** {device.get('operatingSystem', 'N/A')}
@@ -137,16 +140,29 @@ def sync_datto_devices():
 - **Last Logged In User:** {device.get('lastLoggedInUser', 'N/A')}
 - **Status:** {'Online' if device.get('online') else 'Offline'}
 - **Last Seen:** {device.get('lastSeen')}
+- **Antivirus:** {(device.get('antivirus') or {}).get('productName', 'N/A')} (Up to date: {(device.get('antivirus') or {}).get('upToDate', 'N/A')})
+- **Disk Usage:** {device.get('totalDiskSpaceUsage', 'N/A')}
+- **Memory:** {device.get('memory', 'N/A')}
+- **Datto Device UID:** {datto_uid}
 """
+                session.run("""
+                    MATCH (assets_folder:ContextItem {id: 'assets_for_' + $account_number})
+                    MERGE (computer_md:ContextItem {id: $datto_uid, name: $hostname, is_folder: false, datto_uid: $datto_uid})
+                    ON CREATE SET computer_md.content = $content
+                    ON MATCH SET computer_md.content = $content
+                    MERGE (assets_folder)-[:PARENT_OF]->(computer_md)
+                """, account_number=account_number, datto_uid=datto_uid, hostname=f"{hostname}.md", content=computer_md_content)
+
+                user_email = find_user_for_device(session, str(account_number), hostname, description)
+
+                if user_email:
+                    # **THE FIX**: Match the existing asset and user folder, then merge only the relationship.
                     session.run("""
                         MATCH (user_folder:ContextItem {user_email: $user_email})
-                        MERGE (computer_md:ContextItem {name: $hostname, is_folder: false, datto_uid: $datto_uid})
-                        ON CREATE SET computer_md.content = $content
-                        ON MATCH SET computer_md.content = $content
+                        MATCH (computer_md:ContextItem {id: $datto_uid})
                         MERGE (user_folder)-[:PARENT_OF]->(computer_md)
-                    """, user_email=user_email, hostname=f"{hostname}.md", datto_uid=device.get('uid'), content=computer_md_content)
+                    """, user_email=user_email, datto_uid=datto_uid)
                     print(f"  - Associated '{hostname}' with user '{user_email}'")
-
 
 if __name__ == "__main__":
     sync_datto_devices()
