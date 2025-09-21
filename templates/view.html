@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <title>View Item</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="stylesheet" href="https://unpkg.com/easymde/dist/easymde.min.css">
-    <script src="https://unpkg.com/easymde/dist/easymde.min.js"></script>
+    
+    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
+    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
 <body>
@@ -20,8 +21,8 @@
             </div>
 
         <div id="editor-container" class="content-area">
-            <h3>Edit Content (Markdown)</h3>
-            <textarea id="markdown-editor"></textarea>
+            <h3>Edit Content</h3>
+            <div id="editor"></div>
             <button id="save-btn">Save Content</button>
         </div>
 
@@ -33,7 +34,10 @@
         </div>
     </div>
     
+    <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
+
     <script>
+        // Pass the node_id from Flask to JavaScript
         const NODE_ID = "{{ node_id }}";
     </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>

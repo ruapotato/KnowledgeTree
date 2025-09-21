@@ -8,14 +8,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// --- File Manager (Index Page) Logic ---
 function initIndexPage() {
+    // This entire function is correct and unchanged
     const fileBrowser = document.getElementById('file-browser');
     const breadcrumbNav = document.getElementById('breadcrumb');
     const contextMenu = document.getElementById('context-menu');
     const backBtn = document.getElementById('back-btn');
     
     let currentFolderId = null;
-    let currentPathArray = []; // Stores the array of names ['Folder A', 'Subfolder B']
+    let currentPathArray = [];
     let currentFolderIsAttached = false;
     let selectedItemId = null;
     let selectedItemType = { is_folder: false, is_attached: false };
@@ -107,7 +109,7 @@ function initIndexPage() {
             
             if (index < pathData.length - 1) {
                 const link = document.createElement('a');
-                link.href = '#'; // Let click handler manage navigation
+                link.href = '#';
                 link.textContent = segment.name;
                 link.onclick = (e) => { e.preventDefault(); navigateToPath(pathSlice); };
                 breadcrumbNav.appendChild(link);
@@ -225,8 +227,9 @@ function initIndexPage() {
     history.replaceState({ path: initialPath }, "", `/#/${initialPath.map(p=>encodeURIComponent(p)).join('/')}`);
 }
 
+
+// --- View Page Logic ---
 function initViewPage() {
-    // This entire function is complete and correct from the previous version.
     const nodeNameEl = document.getElementById('node-name');
     const contentDisplayEl = document.getElementById('content-display');
     const saveBtn = document.getElementById('save-btn');
@@ -234,17 +237,29 @@ function initViewPage() {
     const uploadBtn = document.getElementById('upload-btn');
     const fileListEl = document.getElementById('file-list');
 
-    const mde = new EasyMDE({ element: document.getElementById('markdown-editor') });
+    // **NEW**: Initialize Toast UI Editor
+    const editor = new toastui.Editor({
+        el: document.querySelector('#editor'),
+        height: '600px',
+        initialEditType: 'wysiwyg', // Start in rich-text mode
+        previewStyle: 'tab',
+        usageStatistics: false // Disables data collection
+    });
 
     async function loadNodeData() {
         const response = await fetch(`/api/node/${NODE_ID}`);
         const data = await response.json();
+        
         nodeNameEl.textContent = data.name;
-        contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Click Edit to add some.</p>';
-        mde.value(data.content || '');
+        contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Edit to add some.</p>';
+        
+        // **NEW**: Set content in the new editor
+        editor.setMarkdown(data.content || '');
+
         if (data.is_folder) {
             document.body.classList.add('is-folder');
         }
+
         fileListEl.innerHTML = '';
         if (data.files && data.files.length > 0) {
             const ul = document.createElement('ul');
@@ -262,15 +277,20 @@ function initViewPage() {
             fileListEl.innerHTML = '<p>No files attached.</p>';
         }
     }
+
     saveBtn.addEventListener('click', async () => {
+        // **NEW**: Get content from the new editor
+        const content = editor.getMarkdown();
+        
         await fetch(`/api/node/${NODE_ID}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: mde.value() })
+            body: JSON.stringify({ content: content })
         });
         alert('Content saved!');
-        loadNodeData();
+        loadNodeData(); // Refresh displayed content
     });
+
     exportBtn.addEventListener('click', async () => {
         const response = await fetch(`/api/context/${NODE_ID}`);
         const data = await response.json();
@@ -283,6 +303,7 @@ function initViewPage() {
             alert('Failed to copy context.');
         }
     });
+
     uploadBtn.addEventListener('click', async () => {
         const fileInput = document.getElementById('file-upload-input');
         if (fileInput.files.length === 0) {
@@ -291,10 +312,12 @@ function initViewPage() {
         }
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
+
         const response = await fetch(`/api/upload/${NODE_ID}`, {
             method: 'POST',
             body: formData
         });
+        
         if (response.ok) {
             alert('File uploaded successfully!');
             fileInput.value = '';
@@ -303,5 +326,6 @@ function initViewPage() {
             alert('File upload failed.');
         }
     });
+
     loadNodeData();
 }
