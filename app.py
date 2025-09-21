@@ -355,6 +355,80 @@ def import_user_data():
             
     return jsonify({'error': 'File import failed'}), 500
 
+@app.route('/api/context/<node_id>', methods=['GET'])
+def get_context(node_id):
+    """
+    Exports the full context for a given node as a markdown formatted string.
+    This includes all articles within every parent directory up to the root,
+    and the content from any "attached" folders.
+    """
+    context_parts = []
+    with driver.session() as session:
+        # 1. Get all nodes on the path from the root to the current node
+        path_query = """
+            MATCH p = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
+            RETURN nodes(p) AS path_nodes
+        """
+        result = session.run(path_query, node_id=node_id).single()
+        if not result:
+            return jsonify({'error': 'Node not found'}), 404
+
+        path_nodes = result['path_nodes']
+        
+        # 2. Iterate through each folder on the path and gather its content in markdown format
+        for i, node in enumerate(path_nodes):
+            if node['is_folder']:
+                # Use a top-level heading for the root and subsequent headings for subfolders
+                heading_level = '#' * (i + 1)
+                
+                # We only need the name of the last part of the path for the heading
+                header = f"{heading_level} Context: {node['name']}"
+                context_parts.append(header)
+                
+                folder_id = node['id']
+                
+                # 3. Get direct articles AND articles from any attached folders
+                articles_query = """
+                    MATCH (folder:ContextItem {id: $folder_id})-[:PARENT_OF]->(article:ContextItem)
+                    WHERE article.is_folder = false AND (article.is_attached IS NULL OR article.is_attached = false)
+                    RETURN article.name AS name, article.content AS content, "" AS source_folder
+                    UNION
+                    MATCH (folder:ContextItem {id: $folder_id})-[:PARENT_OF]->(attached:ContextItem {is_attached: true})
+                    MATCH (attached)-[:PARENT_OF*..]->(article:ContextItem)
+                    WHERE article.is_folder = false
+                    RETURN article.name AS name, article.content AS content, attached.name AS source_folder
+                """
+                articles_result = session.run(articles_query, folder_id=folder_id)
+                
+                folder_content = []
+                for record in articles_result:
+                    # Use a sub-heading for each file
+                    file_header = f"{heading_level}# File: {record['name']}"
+                    if record['source_folder']:
+                        file_header += f" (from attached folder: {record['source_folder']})"
+                    
+                    folder_content.append(file_header)
+                    folder_content.append(record['content'] or "> No content.")
+                
+                if folder_content:
+                    context_parts.append("\n\n".join(folder_content))
+
+        # 4. Get any files attached directly to the specific node and format as a markdown list
+        files_query = """
+            MATCH (:ContextItem {id: $node_id})-[:HAS_FILE]->(f:File)
+            RETURN f.filename as filename
+        """
+        files_result = session.run(files_query, node_id=node_id)
+        filenames = [record['filename'] for record in files_result]
+        if filenames:
+            context_parts.append(f"## Attached Files for {path_nodes[-1]['name']}")
+            file_list = [f"- {name}" for name in filenames]
+            context_parts.append("\n".join(file_list))
+
+    full_context = "\n\n".join(context_parts)
+    return jsonify({'context': full_context})
+
+
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
