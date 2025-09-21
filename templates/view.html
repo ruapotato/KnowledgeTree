@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>View Item</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://unpkg.com/easymde/dist/easymde.min.css">
+    <script src="https://unpkg.com/easymde/dist/easymde.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <div class="container view-container">
+        <header class="view-header">
+            <a href="/" class="back-link"><i class="fas fa-arrow-left"></i> Back to KnowledgeTree</a>
+            <h1 id="node-name">Loading...</h1>
+            <button id="export-context-btn"><i class="fas fa-copy"></i> Export Full Context</button>
+        </header>
+
+        <div id="content-display" class="content-area">
+            </div>
+
+        <div id="editor-container" class="content-area">
+            <h3>Edit Content (Markdown)</h3>
+            <textarea id="markdown-editor"></textarea>
+            <button id="save-btn">Save Content</button>
+        </div>
+
+        <div class="attachments-area">
+            <h3><i class="fas fa-paperclip"></i> Attachments</h3>
+            <div id="file-list"></div>
+            <input type="file" id="file-upload-input">
+            <button id="upload-btn">Upload File</button>
+        </div>
+    </div>
+    
+    <script>
+        // Pass the node_id from Flask to JavaScript
+        const NODE_ID = "{{ node_id }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

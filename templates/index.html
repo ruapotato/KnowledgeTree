@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>KnowledgeTree - Context Graph</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-brain"></i> KnowledgeTree</h1>
+            <p>The Context-Aware Knowledge Graph</p>
+        </header>
+        <main>
+            <div id="file-manager">
+                </div>
+            <div class="actions">
+                <h3>Create New</h3>
+                <input type="text" id="new-node-name" placeholder="Name for new item...">
+                <div class="options">
+                    <button id="add-article-btn"><i class="fas fa-file-alt"></i> New Article</button>
+                    <button id="add-folder-btn"><i class="fas fa-folder"></i> New Folder</button>
+                </div>
+                 <p class="note">Select a folder on the left to add items inside it.</p>
+            </div>
+        </main>
+    </div>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
