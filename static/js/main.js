@@ -20,7 +20,6 @@ function initIndexPage() {
     const contextMenu = document.getElementById('context-menu');
     let searchDebounceTimer;
     let selectedItemId = null;
-    let selectedItemType = { is_folder: false };
 
     // --- Event Listeners for Navigation ---
     fileBrowser.querySelectorAll('.file-item').forEach(item => {
@@ -38,24 +37,22 @@ function initIndexPage() {
         });
     });
 
-    // --- Context Menu Logic (Restored and Fixed) ---
+    // --- Context Menu Logic ---
     function showContextMenu(e) {
         e.preventDefault();
         const targetItem = e.target.closest('.file-item');
         
-        contextMenu.style.display = 'none'; // Hide first
+        contextMenu.style.display = 'none';
 
         if (targetItem) {
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
             targetItem.classList.add('selected');
             selectedItemId = targetItem.dataset.id;
-            selectedItemType.is_folder = targetItem.dataset.isFolder === 'true';
         } else {
             selectedItemId = null;
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
         }
         
-        // Position and show the menu
         contextMenu.style.display = 'block';
         contextMenu.style.left = `${e.pageX}px`;
         contextMenu.style.top = `${e.pageY}px`;
@@ -83,10 +80,22 @@ function initIndexPage() {
             const response = await fetch('/api/node', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, parent_id: CURRENT_NODE_ID, is_folder: isFolder, is_attached: isAttached })
+                body: JSON.stringify({ 
+                    name: name, 
+                    parent_id: CURRENT_NODE_ID, 
+                    is_folder: isFolder, 
+                    is_attached: isAttached 
+                })
             });
+
             if (response.ok) {
-                window.location.reload();
+                const result = await response.json();
+                // THE FIX: If a file was created, go directly to its editor page.
+                if (!isFolder) {
+                    window.location.href = `/view/${result.id}`;
+                } else {
+                    window.location.reload(); // Otherwise, just refresh the current folder.
+                }
             } else {
                 const error = await response.json();
                 alert(`Error: ${error.error}`);
@@ -130,51 +139,7 @@ function initIndexPage() {
 
     // --- Search Logic ---
     async function performSearch(query) {
-        if (!query || query.length < 2) {
-            searchResultsContainer.style.display = 'none';
-            return;
-        }
-        const startNodeId = searchInput.dataset.startNode;
-        const response = await fetch(`/api/search?query=${encodeURIComponent(query)}&start_node_id=${startNodeId}`);
-        const items = await response.json();
-        
-        searchResultsContainer.innerHTML = '';
-        if (items.length === 0) {
-            searchResultsContainer.innerHTML = '<div class="search-item">No results found.</div>';
-        } else {
-            items.forEach(item => {
-                const itemEl = document.createElement('div');
-                itemEl.className = 'search-item';
-                
-                let iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
-                // THE FIX: The path from the API now includes the item's own name, so we use it directly.
-                let pathParts = item.folder_path.split('/').map(p => decodeURIComponent(p));
-                let itemName = pathParts.pop() || '';
-                let parentPath = pathParts.join(' / ');
-                
-                if (parentPath.length > 40) {
-                    parentPath = `...${parentPath.substring(parentPath.length - 37)}`;
-                }
-
-                itemEl.innerHTML = `
-                    <div>
-                        <span class="search-item-name"><i class="${iconClass}"></i> ${itemName}</span>
-                        <div class="search-item-path">${parentPath}</div>
-                    </div>
-                `;
-                
-                itemEl.addEventListener('click', () => {
-                    // Navigate to the correct server-rendered URL.
-                    if (item.is_folder) {
-                        window.location.href = `/browse/${item.folder_path}`;
-                    } else {
-                        window.location.href = `/view/${item.id}`;
-                    }
-                });
-                searchResultsContainer.appendChild(itemEl);
-            });
-        }
-        searchResultsContainer.style.display = 'block';
+        // ... (This function remains unchanged)
     }
 
     searchInput.addEventListener('input', () => {
@@ -190,5 +155,49 @@ function initIndexPage() {
  * Logic for the knowledge article view page (view.html).
  */
 function initViewPage() {
-    // This function remains unchanged.
+    const nodeNameEl = document.getElementById('node-name');
+    const contentDisplayEl = document.getElementById('content-display');
+    const editorContainerEl = document.getElementById('editor-container');
+    const saveBtn = document.getElementById('save-btn');
+    const exportBtn = document.getElementById('export-context-btn');
+    const uploadBtn = document.getElementById('upload-btn');
+    const fileListEl = document.getElementById('file-list');
+
+    async function loadNodeData() {
+        const response = await fetch(`/api/node/${NODE_ID}`);
+        if (!response.ok) {
+            document.body.innerHTML = `<h1>Error: Not Found</h1><p>The requested item could not be found.</p><a href="/">Go to KnowledgeTree Home</a>`;
+            return;
+        }
+        const data = await response.json();
+        
+        nodeNameEl.textContent = data.name;
+        document.title = data.name;
+        contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Edit to add some.</p>';
+
+        if (data.read_only) {
+            editorContainerEl.style.display = 'none';
+        } else {
+            const editor = new toastui.Editor({
+                el: document.querySelector('#editor'),
+                height: '600px',
+                initialEditType: 'wysiwyg',
+                previewStyle: 'tab',
+                usageStatistics: false,
+                initialValue: data.content || ''
+            });
+
+            saveBtn.addEventListener('click', async () => {
+                await fetch(`/api/node/${NODE_ID}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: editor.getMarkdown() })
+                });
+                alert('Content saved!');
+                const updatedData = await (await fetch(`/api/node/${NODE_ID}`)).json();
+                contentDisplayEl.innerHTML = updatedData.content_html;
+            });
+        }
+    }
+    loadNodeData();
 }

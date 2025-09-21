@@ -153,10 +153,6 @@ def search_nodes():
 
 @app.route('/api/node', methods=['POST'])
 def create_node():
-    """
-    Creates a new node (folder, attached folder, or knowledge article).
-    This is called by the context menu.
-    """
     data = request.json
     parent_id = data.get('parent_id')
     name = data.get('name')
@@ -186,6 +182,8 @@ def create_node():
 @app.route('/api/node/<node_id>', methods=['GET'])
 def get_node(node_id):
     def fetch_node(tx, node_id):
+        # THE FIX: Restored the correct, detailed query that includes the 'files' collection.
+        # This was the cause of the "Loading..." bug.
         query = """
         MATCH (n:ContextItem {id: $node_id})
         OPTIONAL MATCH (n)-[:HAS_FILE]->(f:File)
@@ -340,7 +338,6 @@ def import_user_data():
                         
                         tx.run("""
                             MATCH (parent:ContextItem {id: $parent_id})
-                            // Use a unique property for merging files within the same parent
                             MERGE (file:ContextItem {name: $name, parent_id_for_merge: $parent_id})
                             ON CREATE SET file.id = $id, file.content = $content, file.is_folder = false, file.read_only = false
                             ON MATCH SET file.content = $content
