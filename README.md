@@ -122,8 +122,31 @@ This project is licensed under the **GNU Affero General Public License v3.0**. S
     -   Set the initial password by running `cypher-shell -u neo4j -p neo4j` and following the prompts.
         
 4.  **Create `.env` file:** In the project's root directory, create a `.env` file and add your credentials and API keys for Neo4j, Freshservice, and Datto RMM.
+    ```
+    # Neo4j Credentials
+    # This is the default address for a local Neo4j installation.
+    NEO4J_URI=bolt://localhost:7687
+    NEO4J_USER=neo4j
+    NEO4J_PASSWORD=your_new_super_secret_password
     
-5.  **Run the application:**
+    # Freshservice API
+    # Replace 'your_domain' with your actual Freshservice subdomain.
+    FRESHSERVICE_DOMAIN=your_domain.freshservice.com
+    FRESHSERVICE_API_KEY=your_freshservice_api_key
+    
+    # Datto RMM API
+    # This is the standard endpoint for the Datto RMM API.
+    DATTO_API_ENDPOINT=https://api.datto.com
+    DATTO_API_KEY=your_datto_api_key
+    DATTO_API_SECRET=your_datto_api_secret
+    
+    # Scheduler Intervals (Optional)
+    # These values are in minutes. The defaults are set to 1440 minutes (24 hours).
+    FRESHSERVICE_PULL_INTERVAL=1440
+    DATTO_PULL_INTERVAL=1440
+    ```
+    
+6.  **Run the application:**
     
     Bash
     
@@ -132,4 +155,4 @@ This project is licensed under the **GNU Affero General Public License v3.0**. S
     
     ```
     
-6.  **(Optional) First Run / Reset:** Navigate to `/admin` to wipe the database for a clean start. Then, go to `/admin/settings` to trigger the initial data syncs.
+7.  **(Optional) First Run / Reset:** Navigate to `/admin` to wipe the database for a clean start. Then, go to `/admin/settings` to trigger the initial data syncs.
