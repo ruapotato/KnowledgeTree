@@ -5,6 +5,8 @@
     --bg-color: #f8f9fa;
     --text-color: #343a40;
     --primary-color: #007bff;
+    --secondary-color: #6c757d;
+    --attached-color: #28a745; /* Changed from orange to green */
     --border-color: #dee2e6;
     --card-bg: #ffffff;
     --shadow: 0 4px 6px rgba(0,0,0,0.07);
@@ -46,19 +48,11 @@ header h1 {
     margin-bottom: 2rem;
     border: 1px solid var(--border-color);
 }
-#breadcrumb a {
-    text-decoration: none;
-    color: var(--primary-color);
-}
-#breadcrumb span {
-    margin: 0 0.5rem;
-    color: #6c757d;
-}
+#breadcrumb a { text-decoration: none; color: var(--primary-color); }
+#breadcrumb span { margin: 0 0.5rem; color: #6c757d; }
 
 /* File Browser */
-#file-browser-container {
-    min-height: 50vh;
-}
+#file-browser-container { min-height: 50vh; }
 #file-browser {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -82,16 +76,12 @@ header h1 {
 }
 .file-item i {
     font-size: var(--icon-size);
-    color: var(--primary-color);
     margin-bottom: 0.5rem;
 }
-.file-item i.fa-file-alt {
-    color: #6c757d;
-}
-.file-item .name {
-    word-break: break-all;
-    font-size: 0.9rem;
-}
+.file-item .fa-folder { color: var(--primary-color); }
+.file-item .fa-file-alt { color: var(--secondary-color); }
+.file-item .fa-paperclip { color: var(--attached-color); } /* Paperclip icon color */
+.file-item .name { word-break: break-all; font-size: 0.9rem; }
 
 /* Context Menu */
 .context-menu {
@@ -104,11 +94,7 @@ header h1 {
     z-index: 1000;
     padding: 8px 0;
 }
-.context-menu ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-}
+.context-menu ul { list-style: none; margin: 0; padding: 0; }
 .context-menu li {
     padding: 10px 20px;
     cursor: pointer;
@@ -116,22 +102,13 @@ header h1 {
     align-items: center;
     gap: 10px;
 }
-.context-menu li:hover {
-    background-color: var(--bg-color);
-}
-.context-menu hr {
-    margin: 5px 0;
-    border: none;
-    border-top: 1px solid var(--border-color);
-}
-.context-menu .disabled {
-    color: #adb5bd;
-    pointer-events: none;
-    background-color: transparent;
+.context-menu li:hover { background-color: var(--bg-color); }
+.context-menu hr { margin: 5px 0; border: none; border-top: 1px solid var(--border-color); }
+.context-menu .hidden {
+    display: none; /* Hide disabled options */
 }
 
-
-/* View Page Styling (from before, still relevant) */
+/* View Page Styling */
 .view-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
 .view-header h1 { margin: 0; }
 .back-link { text-decoration: none; }

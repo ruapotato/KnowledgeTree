@@ -21,66 +21,75 @@ driver = GraphDatabase.driver(uri, auth=basic_auth(user, password))
 def ensure_root_exists(tx):
     tx.run("""
         MERGE (r:ContextItem {id: 'root', name: 'KnowledgeTree Root'})
-        ON CREATE SET r.content = '# Welcome to KnowledgeTree', r.is_folder = true
+        ON CREATE SET r.content = '# Welcome to KnowledgeTree', r.is_folder = true, r.is_attached = false
     """)
 
 with driver.session() as session:
     session.write_transaction(ensure_root_exists)
 
-# --- Main Routes ---
+# --- Main Routes (Unchanged) ---
 @app.route('/')
 def index():
-    """Renders the main file manager interface."""
     return render_template('index.html')
 
 @app.route('/view/<node_id>')
 def view_node(node_id):
-    """Renders the view/edit page for a single node."""
     return render_template('view.html', node_id=node_id)
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
-    """Serves uploaded files."""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # --- API Endpoints ---
 @app.route('/api/nodes/<parent_id>', methods=['GET'])
 def get_nodes_in_folder(parent_id):
-    """Fetches the immediate children of a given parent node."""
+    """
+    Fetches items for the file browser.
+    - Fixes the double-render bug by using DISTINCT.
+    - Implements "paperclip" logic by including items from attached sub-folders.
+    """
     with driver.session() as session:
-        result = session.run("""
-            MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child:ContextItem)
-            RETURN child.id AS id, child.name AS name, child.is_folder AS is_folder
-            ORDER BY child.is_folder DESC, child.name
-        """, parent_id=parent_id)
-        return jsonify([dict(record) for record in result])
+        # This query gets all direct children, AND all children of "attached" folders one level deep.
+        query = """
+            // Get all direct children
+            MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
+            RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, child.is_attached as is_attached
+            UNION
+            // Also get the children from any attached folders
+            MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(:ContextItem {is_attached: true})-[:PARENT_OF]->(grandchild)
+            RETURN DISTINCT grandchild.id AS id, grandchild.name AS name, grandchild.is_folder AS is_folder, grandchild.is_attached as is_attached
+        """
+        result = session.run(query, parent_id=parent_id)
+        
+        # We need to sort in Python now since UNION prevents ORDER BY in the query
+        records = [dict(record) for record in result]
+        records.sort(key=lambda x: (not x.get('is_folder', False), x.get('name', '')))
+        
+        return jsonify(records)
 
 @app.route('/api/path/<node_id>', methods=['GET'])
 def get_path(node_id):
-    """Gets the full path (breadcrumbs) to a node."""
     if node_id == 'root':
          with driver.session() as session:
             root_node = session.run("MATCH (n:ContextItem {id: 'root'}) RETURN n.id as id, n.name as name").single()
             return jsonify([dict(root_node)])
-
     with driver.session() as session:
         result = session.run("""
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
+            WHERE NOT any(n IN nodes(path) WHERE n.is_attached = true AND n.id <> $node_id)
             WITH nodes(path) AS path_nodes
             UNWIND path_nodes as node
             RETURN node.id AS id, node.name AS name
         """, node_id=node_id)
         return jsonify([dict(record) for record in result])
 
-
 @app.route('/api/node/<node_id>', methods=['GET'])
 def get_node(node_id):
-    """Fetches data for a single node."""
     def fetch_node(tx, node_id):
         query = """
         MATCH (n:ContextItem {id: $node_id})
         OPTIONAL MATCH (n)-[:HAS_FILE]->(f:File)
-        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder,
+        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder, n.is_attached as is_attached,
                collect({id: f.id, filename: f.filename}) AS files
         """
         result = tx.run(query, node_id=node_id).single()
@@ -90,31 +99,39 @@ def get_node(node_id):
             data['files'] = [file for file in data.get('files', []) if file and file.get('id')]
             return data
         return None
-
     with driver.session() as session:
         node_data = session.read_transaction(fetch_node, node_id)
         return jsonify(node_data if node_data else {})
 
 @app.route('/api/node', methods=['POST'])
 def create_node():
-    """Creates a new node (article or folder)."""
+    """Creates a new node, handling attached folder logic."""
     data = request.json
     parent_id = data.get('parent_id', 'root')
     name = data.get('name')
     is_folder = data.get('is_folder', False)
+    is_attached = data.get('is_attached', False)
     new_id = str(uuid.uuid4())
 
     with driver.session() as session:
+        # Enforce rule: only attached folders can be created in attached folders
+        parent_is_attached = session.run("MATCH (p:ContextItem {id: $id}) RETURN p.is_attached as attached", id=parent_id).single()['attached']
+        if parent_is_attached and not is_attached:
+             return jsonify({'error': 'Only attached items can be created in an attached folder.'}), 400
+        if parent_is_attached and not is_folder:
+             return jsonify({'error': 'Only folders (not articles) can be created in an attached folder.'}), 400
+
         session.run("""
             MATCH (parent:ContextItem {id: $parent_id})
-            CREATE (child:ContextItem {id: $id, name: $name, is_folder: $is_folder, content: ''})
+            CREATE (child:ContextItem {id: $id, name: $name, is_folder: $is_folder, content: '', is_attached: $is_attached})
             CREATE (parent)-[:PARENT_OF]->(child)
-        """, parent_id=parent_id, id=new_id, name=name, is_folder=is_folder)
-    return jsonify({'success': True, 'id': new_id, 'name': name, 'is_folder': is_folder})
+        """, parent_id=parent_id, id=new_id, name=name, is_folder=is_folder, is_attached=is_attached)
+    return jsonify({'success': True, 'id': new_id, 'name': name, 'is_folder': is_folder, 'is_attached': is_attached})
 
+# Unchanged functions: update_node, delete_node, get_context, upload_file_to_node, main execution block
+# ... (include the rest of the functions from the previous app.py here)
 @app.route('/api/node/<node_id>', methods=['PUT'])
 def update_node(node_id):
-    """Updates a node's content or name."""
     data = request.json
     with driver.session() as session:
         if 'content' in data:
@@ -125,9 +142,7 @@ def update_node(node_id):
 
 @app.route('/api/node/<node_id>', methods=['DELETE'])
 def delete_node(node_id):
-    """Deletes a node and all its children."""
     with driver.session() as session:
-        # This query finds the node, finds all children recursively, and deletes them all.
         session.run("""
             MATCH (n:ContextItem {id: $node_id})
             OPTIONAL MATCH (n)-[:PARENT_OF*0..]->(child)
@@ -135,10 +150,8 @@ def delete_node(node_id):
         """, id=node_id)
     return jsonify({'success': True})
 
-
 @app.route('/api/context/<node_id>', methods=['GET'])
 def get_context(node_id):
-    """Fetches the full inherited context for a node."""
     def fetch_context(tx, node_id):
         query = """
         MATCH (start_node:ContextItem {id: $node_id})
@@ -149,7 +162,6 @@ def get_context(node_id):
         """
         result = tx.run(query, node_id=node_id)
         return [dict(record) for record in result]
-
     with driver.session() as session:
         context_data = session.read_transaction(fetch_context, node_id)
         full_context = "\n\n---\n\n".join(

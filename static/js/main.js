@@ -15,12 +15,18 @@ function initIndexPage() {
     const contextMenu = document.getElementById('context-menu');
     
     let currentFolderId = 'root';
+    let currentFolderIsAttached = false;
     let selectedItemId = null;
-    let selectedItemIsFolder = false;
+    let selectedItemType = { is_folder: false, is_attached: false };
 
     async function navigateTo(folderId) {
         currentFolderId = folderId;
         selectedItemId = null;
+        
+        const response = await fetch(`/api/node/${folderId}`);
+        const data = await response.json();
+        currentFolderIsAttached = data.is_attached || false;
+
         await Promise.all([
             renderItems(folderId),
             renderBreadcrumb(folderId)
@@ -37,19 +43,25 @@ function initIndexPage() {
             itemEl.className = 'file-item';
             itemEl.dataset.id = item.id;
             itemEl.dataset.isFolder = item.is_folder;
+            itemEl.dataset.isAttached = item.is_attached || false;
             
-            const iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
+            let iconClass = 'fas fa-file-alt';
+            if (item.is_folder) {
+                iconClass = item.is_attached ? 'fas fa-paperclip' : 'fas fa-folder';
+            }
+            
             itemEl.innerHTML = `<i class="${iconClass}"></i><span class="name">${item.name}</span>`;
             
-            // Single click: select
             itemEl.addEventListener('click', () => {
                 document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
                 itemEl.classList.add('selected');
                 selectedItemId = item.id;
-                selectedItemIsFolder = item.is_folder;
+                selectedItemType = { 
+                    is_folder: item.is_folder, 
+                    is_attached: item.is_attached || false 
+                };
             });
 
-            // Double click: navigate or open
             itemEl.addEventListener('dblclick', () => {
                 if (item.is_folder) {
                     navigateTo(item.id);
@@ -72,10 +84,7 @@ function initIndexPage() {
                 const link = document.createElement('a');
                 link.href = '#';
                 link.textContent = segment.name;
-                link.onclick = (e) => {
-                    e.preventDefault();
-                    navigateTo(segment.id);
-                };
+                link.onclick = (e) => { e.preventDefault(); navigateTo(segment.id); };
                 breadcrumb.appendChild(link);
                 breadcrumb.appendChild(document.createElement('span')).textContent = '>';
             } else {
@@ -84,7 +93,6 @@ function initIndexPage() {
         });
     }
 
-    // --- Context Menu Logic ---
     function showContextMenu(e) {
         e.preventDefault();
         contextMenu.style.display = 'block';
@@ -92,34 +100,52 @@ function initIndexPage() {
         contextMenu.style.top = `${e.pageY}px`;
 
         const targetItem = e.target.closest('.file-item');
+        const openEl = document.getElementById('context-open');
+        const renameEl = document.getElementById('context-rename');
+        const deleteEl = document.getElementById('context-delete');
+        const newFolderEl = document.getElementById('context-new-folder');
+        const newAttachedEl = document.getElementById('context-new-attached');
+        const newArticleEl = document.getElementById('context-new-article');
+
+        [openEl, renameEl, deleteEl, newFolderEl, newAttachedEl, newArticleEl].forEach(el => el.classList.remove('hidden'));
+
         if (targetItem) {
-            // Right-clicked on an item
-            targetItem.click(); // Select it
-            document.getElementById('context-open').classList.remove('disabled');
-            document.getElementById('context-rename').classList.remove('disabled');
-            document.getElementById('context-delete').classList.remove('disabled');
+            targetItem.click();
         } else {
-            // Right-clicked on the background
             selectedItemId = null;
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
-            document.getElementById('context-open').classList.add('disabled');
-            document.getElementById('context-rename').classList.add('disabled');
-            document.getElementById('context-delete').classList.add('disabled');
+            [openEl, renameEl, deleteEl].forEach(el => el.classList.add('hidden'));
+        }
+
+        // *** LOGIC CORRECTION IS HERE ***
+        // Rules for what can be created where
+        if (currentFolderIsAttached) {
+            // When INSIDE an attached folder, you can ONLY create other attached folders.
+            newFolderEl.classList.add('hidden');
+            newArticleEl.classList.add('hidden');
+        } else {
+            // When in a REGULAR folder, you can create regular folders/articles.
+            // You can also create a NEW attached folder.
+            // The previous bug was hiding this option. It is now visible.
         }
     }
 
     document.getElementById('file-browser-container').addEventListener('contextmenu', showContextMenu);
     document.addEventListener('click', () => contextMenu.style.display = 'none');
 
-    // --- Context Menu Actions ---
-    async function createNewItem(isFolder) {
-        const name = prompt(`Enter name for new ${isFolder ? 'folder' : 'knowledge'}:`);
+    async function createNewItem(isFolder, isAttached = false) {
+        const type = isAttached ? 'attached folder' : (isFolder ? 'folder' : 'knowledge');
+        const name = prompt(`Enter name for new ${type}:`);
         if (name) {
-            await fetch('/api/node', {
+            const response = await fetch('/api/node', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, parent_id: currentFolderId, is_folder: isFolder })
+                body: JSON.stringify({ name, parent_id: currentFolderId, is_folder: isFolder, is_attached: isAttached })
             });
+            if (!response.ok) {
+                const error = await response.json();
+                alert(`Error: ${error.error}`);
+            }
             renderItems(currentFolderId);
         }
     }
@@ -146,13 +172,14 @@ function initIndexPage() {
         }
     }
     
-    document.getElementById('context-new-folder').onclick = () => createNewItem(true);
-    document.getElementById('context-new-article').onclick = () => createNewItem(false);
+    document.getElementById('context-new-folder').onclick = () => createNewItem(true, false);
+    document.getElementById('context-new-attached').onclick = () => createNewItem(true, true);
+    document.getElementById('context-new-article').onclick = () => createNewItem(false, false);
     document.getElementById('context-rename').onclick = renameItem;
     document.getElementById('context-delete').onclick = deleteItem;
     document.getElementById('context-open').onclick = () => {
         if (selectedItemId) {
-            if (selectedItemIsFolder) {
+            if (selectedItemType.is_folder) {
                 navigateTo(selectedItemId);
             } else {
                 window.location.href = `/view/${selectedItemId}`;
@@ -160,13 +187,11 @@ function initIndexPage() {
         }
     };
 
-
-    // Initial load
     navigateTo('root');
 }
 
 
-// --- View Page Logic (largely unchanged) ---
+// --- View Page Logic (unchanged) ---
 function initViewPage() {
     const nodeNameEl = document.getElementById('node-name');
     const contentDisplayEl = document.getElementById('content-display');
@@ -174,7 +199,6 @@ function initViewPage() {
     const exportBtn = document.getElementById('export-context-btn');
     const uploadBtn = document.getElementById('upload-btn');
     const fileListEl = document.getElementById('file-list');
-
     const mde = new EasyMDE({ element: document.getElementById('markdown-editor') });
 
     async function loadNodeData() {
