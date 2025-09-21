@@ -4,28 +4,22 @@
     <meta charset="UTF-8">
     <title>View Item</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    
     <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
-    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
 <body>
     <div class="container view-container">
         <header class="view-header">
-            <a href="javascript:history.back()" class="back-link"><i class="fas fa-arrow-left"></i> Back</a>
+            <a href="/browse/{{ parent_path }}" class="back-link"><i class="fas fa-arrow-left"></i> Back</a>
             <h1 id="node-name">Loading...</h1>
             <button id="export-context-btn"><i class="fas fa-copy"></i> Export Full Context</button>
         </header>
-
-        <div id="content-display" class="content-area">
-            </div>
-
+        <div id="content-display" class="content-area"></div>
         <div id="editor-container" class="content-area">
             <h3>Edit Content</h3>
             <div id="editor"></div>
             <button id="save-btn">Save Content</button>
         </div>
-
         <div class="attachments-area">
             <h3><i class="fas fa-paperclip"></i> Attachments</h3>
             <div id="file-list"></div>
@@ -33,11 +27,8 @@
             <button id="upload-btn">Upload File</button>
         </div>
     </div>
-    
     <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
-
     <script>
-        // Pass the node_id from Flask to JavaScript
         const NODE_ID = "{{ node_id }}";
     </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>

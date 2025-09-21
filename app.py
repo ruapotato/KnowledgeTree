@@ -5,9 +5,9 @@ import schedule
 import time
 import threading
 import json
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 from dotenv import load_dotenv, set_key
-from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, send_file
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for
 from neo4j import GraphDatabase, basic_auth
 import markdown
 from scripts.pull_freshservice import sync_companies_and_users
@@ -24,29 +24,7 @@ user = os.getenv("NEO4J_USER")
 password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver(uri, auth=basic_auth(user, password))
 
-# --- Scheduler ---
-def run_continuously(interval=1):
-    cease_continuous_run = threading.Event()
-
-    class ScheduleThread(threading.Thread):
-        @classmethod
-        def run(cls):
-            while not cease_continuous_run.is_set():
-                schedule.run_pending()
-                time.sleep(interval)
-
-    continuous_thread = ScheduleThread()
-    continuous_thread.start()
-    return cease_continuous_run
-
-def setup_scheduler():
-    freshservice_interval = int(os.getenv('FRESHSERVICE_PULL_INTERVAL', 1440))
-    datto_interval = int(os.getenv('DATTO_PULL_INTERVAL', 1440))
-
-    schedule.every(freshservice_interval).minutes.do(sync_companies_and_users).tag('freshservice')
-    schedule.every(datto_interval).minutes.do(sync_datto_devices).tag('datto')
-
-# Helper to ensure the root node exists
+# --- DB Helper ---
 def ensure_root_exists(tx):
     tx.run("""
         MERGE (r:ContextItem {id: 'root', name: 'KnowledgeTree Root'})
@@ -56,15 +34,90 @@ def ensure_root_exists(tx):
 with driver.session() as session:
     session.write_transaction(ensure_root_exists)
 
+# --- URL Generation Helper ---
+@app.template_filter('quote_plus')
+def quote_plus_filter(s):
+    # This makes the URL encoding function available in Jinja templates
+    return quote(s)
+
 # --- Main Routes ---
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def index(path):
-    return render_template('index.html')
+
+@app.route('/')
+def index():
+    # The root of the site now redirects to the main browser view.
+    return redirect(url_for('browse'))
+
+@app.route('/browse/', defaults={'path': ''})
+@app.route('/browse/<path:path>')
+def browse(path):
+    """
+    This is now the ONLY route for browsing the knowledge tree.
+    It resolves the path server-side and passes all necessary data to the template.
+    """
+    path_parts = [p for p in path.split('/') if p]
+    
+    with driver.session() as session:
+        # 1. Resolve path to get the current node ID
+        query = "MATCH (n0:ContextItem {id: 'root'})"
+        match_clauses, where_clauses, params = [], [], {}
+        for i, part in enumerate(path_parts):
+            prev_node, curr_node = f"n{i}", f"n{i+1}"
+            param_name = f"part_{i}"
+            match_clauses.append(f"MATCH ({prev_node})-[:PARENT_OF]->({curr_node})")
+            where_clauses.append(f"{curr_node}.name = ${param_name}")
+            params[param_name] = unquote(part)
+        
+        full_query = "\n".join([query] + match_clauses) + ("\nWHERE " + " AND ".join(where_clauses) if where_clauses else "") + f"\nRETURN n{len(path_parts)}.id as id"
+        
+        result = session.run(full_query, params).single()
+        node_id = result['id'] if result else 'root'
+
+        # 2. Get children of the current node
+        children_query = """
+            MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
+            RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, 
+                   child.is_attached as is_attached, child.read_only as read_only
+            ORDER BY child.is_folder DESC, child.name
+        """
+        children_result = session.run(children_query, parent_id=node_id)
+        items = [dict(record) for record in children_result]
+
+        # 3. Get breadcrumb path for navigation
+        path_query = """
+            MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
+            RETURN [n in nodes(path) | n.name] AS names
+        """
+        path_result = session.run(path_query, node_id=node_id).single()
+        breadcrumb_names = path_result['names'] if path_result else ["KnowledgeTree Root"]
+
+    return render_template('index.html', 
+                           items=items, 
+                           breadcrumb_names=breadcrumb_names, 
+                           current_path=path,
+                           current_node_id=node_id)
 
 @app.route('/view/<node_id>')
 def view_node(node_id):
-    return render_template('view.html', node_id=node_id)
+    """
+    This route now reliably finds the parent's path for a correct "back" button link.
+    """
+    with driver.session() as session:
+        # Find the parent of the current node to construct the back link
+        path_query = """
+            MATCH (parent:ContextItem)-[:PARENT_OF]->(:ContextItem {id: $node_id})
+            WITH parent
+            MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(parent)
+            RETURN [n IN nodes(path) | n.name] AS names
+        """
+        result = session.run(path_query, node_id=node_id).single()
+        
+        parent_path = ''
+        if result and result['names']:
+            # Create a URL-safe path from the names list, skipping the root
+            parent_path = "/".join([quote(name) for name in result['names'][1:]])
+
+    return render_template('view.html', node_id=node_id, parent_path=parent_path)
+
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
@@ -73,102 +126,52 @@ def uploaded_file(filename):
 # --- Admin Routes ---
 @app.route('/admin')
 def admin_panel():
-    settings = {
-        'FRESHSERVICE_PULL_INTERVAL': os.getenv('FRESHSERVICE_PULL_INTERVAL', 1440),
-        'DATTO_PULL_INTERVAL': os.getenv('DATTO_PULL_INTERVAL', 1440)
-    }
-    return render_template('admin.html', settings=settings)
-
-@app.route('/admin/settings')
-def admin_settings():
-    return redirect('/admin')
+    # A simple admin page placeholder
+    return render_template('admin.html')
 
 # --- API Endpoints ---
+
 @app.route('/api/search', methods=['GET'])
 def search_nodes():
     query = request.args.get('query', '')
     start_node_id = request.args.get('start_node_id', 'root')
 
-    if not query:
-        return jsonify([])
+    if not query: return jsonify([])
 
     with driver.session() as session:
+        # THE FIX: This query now finds the full path from the absolute root
+        # for every search result, ensuring correct URLs.
         result = session.run("""
-            MATCH path = (startNode:ContextItem {id: $start_node_id})-[:PARENT_OF*0..]->(node)
+            MATCH (startNode:ContextItem {id: $start_node_id})-[:PARENT_OF*0..]->(node)
             WHERE toLower(node.name) CONTAINS toLower($query) OR toLower(node.content) CONTAINS toLower($query)
+            WITH DISTINCT node
+            MATCH p = (:ContextItem {id: 'root'})-[:PARENT_OF*..]->(node)
             RETURN node.id as id,
                    node.name as name,
                    node.is_folder as is_folder,
-                   [n IN nodes(path) | n.name] AS path_names
-            LIMIT 25
+                   [n IN nodes(p) | n.name] AS path_names
+            LIMIT 15
             """, {'start_node_id': start_node_id, 'query': query})
         
-        # Process the results to create a full path string
         processed_results = []
         for record in result:
             record_dict = dict(record)
-            # Join the path names, skipping the "KnowledgeTree Root"
-            full_path = " / ".join(record_dict['path_names'][1:])
-            record_dict['full_path'] = full_path
+            path_list = record_dict['path_names'][1:] # Exclude root
+            folder_path = "/".join([quote(name) for name in path_list])
+            record_dict['folder_path'] = folder_path
             processed_results.append(record_dict)
 
         return jsonify(processed_results)
 
-@app.route('/api/resolve_path', methods=['POST'])
-def resolve_path():
-    path_parts = request.json.get('path', [])
-    if not path_parts:
-        return jsonify({'id': 'root'})
-    with driver.session() as session:
-        query = "MATCH (n0:ContextItem {id: 'root'})"
-        match_clauses = []
-        where_clauses = []
-        params = {}
-        for i, part in enumerate(path_parts):
-            prev_node, curr_node = f"n{i}", f"n{i+1}"
-            param_name = f"part_{i}"
-            match_clauses.append(f"MATCH ({prev_node})-[:PARENT_OF]->({curr_node})")
-            where_clauses.append(f"{curr_node}.name = ${param_name}")
-            params[param_name] = part
-        full_query = "\n".join([query] + match_clauses) + "\nWHERE " + " AND ".join(where_clauses) + f"\nRETURN n{len(path_parts)}.id as id"
-        result = session.run(full_query, params).single()
-
-    if result:
-        return jsonify({'id': result['id']})
-    else:
-        return jsonify({'error': 'Path not found'}), 404
-
-@app.route('/api/nodes/<parent_id>', methods=['GET'])
-def get_nodes_in_folder(parent_id):
-    with driver.session() as session:
-        query = """
-            MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
-            RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, child.is_attached as is_attached, child.read_only as read_only
-            ORDER BY child.is_folder DESC, child.name
-        """
-        result = session.run(query, parent_id=parent_id)
-        records = [dict(record) for record in result]
-        return jsonify(records)
-
-@app.route('/api/path/<node_id>', methods=['GET'])
-def get_path(node_id):
-    with driver.session() as session:
-        query = """
-            MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
-            WITH nodes(path) AS path_nodes
-            UNWIND path_nodes as node
-            RETURN node.id AS id, node.name AS name
-        """
-        result = session.run(query, node_id=node_id)
-        return jsonify([dict(record) for record in result])
-
 @app.route('/api/node/<node_id>', methods=['GET'])
 def get_node(node_id):
     def fetch_node(tx, node_id):
+        # Using OPTIONAL MATCH to gracefully handle nodes that might not have files
         query = """
         MATCH (n:ContextItem {id: $node_id})
         OPTIONAL MATCH (n)-[:HAS_FILE]->(f:File)
-        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder, n.is_attached as is_attached, n.read_only as read_only,
+        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder, 
+               n.is_attached as is_attached, n.read_only as read_only,
                collect({id: f.id, filename: f.filename}) AS files
         """
         result = tx.run(query, node_id=node_id).single()
@@ -176,113 +179,39 @@ def get_node(node_id):
             data = dict(result)
             content = data.get('content') or ''
             data['content_html'] = markdown.markdown(content, extensions=['fenced_code', 'tables'])
-            data['files'] = [file for file in data.get('files', []) if file and file.get('id')]
+            # Ensure files list is clean even if there are no attachments
+            data['files'] = [f for f in data.get('files', []) if f['id'] is not None]
             return data
         return None
+    
     with driver.session() as session:
         node_data = session.read_transaction(fetch_node, node_id)
-        return jsonify(node_data if node_data else {})
-
-@app.route('/api/node', methods=['POST'])
-def create_node():
-    data = request.json
-    parent_id = data.get('parent_id', 'root')
-    name = data.get('name')
-    is_folder = data.get('is_folder', False)
-    is_attached = data.get('is_attached', False)
-    new_id = str(uuid.uuid4())
-    with driver.session() as session:
-        parent_is_attached_result = session.run("MATCH (p:ContextItem {id: $id}) RETURN p.is_attached as attached", id=parent_id).single()
-        if parent_is_attached_result and parent_is_attached_result['attached'] and is_folder and not is_attached:
-            return jsonify({'error': 'Only attached folders or knowledge articles can be created here.'}), 400
-        session.run("""
-            MATCH (parent:ContextItem {id: $parent_id})
-            CREATE (child:ContextItem {id: $id, name: $name, is_folder: $is_folder, content: '', is_attached: $is_attached, read_only: false})
-            CREATE (parent)-[:PARENT_OF]->(child)
-        """, parent_id=parent_id, id=new_id, name=name, is_folder=is_folder, is_attached=is_attached)
-    return jsonify({'success': True, 'id': new_id, 'name': name, 'is_folder': is_folder, 'is_attached': is_attached})
+        if node_data:
+            return jsonify(node_data)
+        else:
+            return jsonify({'error': 'Node not found'}), 404
 
 @app.route('/api/node/<node_id>', methods=['PUT'])
 def update_node(node_id):
     data = request.json
     with driver.session() as session:
         if 'content' in data:
-            session.run("MATCH (n:ContextItem {id: $id}) SET n.content = $content", id=node_id, content=data['content'])
+            session.run("MATCH (n:ContextItem {id: $id}) SET n.content = $content", 
+                        id=node_id, content=data['content'])
         if 'name' in data:
-            session.run("MATCH (n:ContextItem {id: $id}) SET n.name = $name", id=node_id, name=data['name'])
+            session.run("MATCH (n:ContextItem {id: $id}) SET n.name = $name", 
+                        id=node_id, name=data['name'])
     return jsonify({'success': True})
 
 @app.route('/api/node/<node_id>', methods=['DELETE'])
 def delete_node(node_id):
     with driver.session() as session:
         session.run("""
-            MATCH (n:ContextItem {id: $node_id})
+            MATCH (n:ContextItem {id: $id})
             OPTIONAL MATCH (n)-[:PARENT_OF*0..]->(child)
             DETACH DELETE n, child
         """, id=node_id)
     return jsonify({'success': True})
-
-@app.route('/api/context/<node_id>', methods=['GET'])
-def get_context(node_id):
-    def fetch_context_ordered(tx, node_id):
-        path_query = """
-            MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
-            RETURN nodes(path) as path_nodes
-        """
-        path_result = tx.run(path_query, node_id=node_id).single()
-        if not path_result:
-            return []
-
-        ordered_ancestors = path_result['path_nodes']
-        
-        full_context_data = []
-        current_path_slug = ""
-
-        for node in ordered_ancestors:
-            ancestor_id = node['id']
-            node_name = node['name']
-            node_content = node.get('content', '')
-
-            if ancestor_id == 'root':
-                current_path_slug = f"/{node_name}"
-            else:
-                path_parts = current_path_slug.split(' / ')
-                if path_parts[-1] != node_name:
-                    current_path_slug += f" / {node_name}"
-
-            if node_content and node_content.strip():
-                full_context_data.append({
-                    "path": current_path_slug,
-                    "content": node_content
-                })
-
-            attached_content_query = """
-                MATCH (ancestor:ContextItem {id: $ancestor_id})-[:PARENT_OF]->(attached_folder:ContextItem {is_attached: true})
-                MATCH (attached_folder)-[:PARENT_OF*0..]->(article)
-                WHERE article.is_folder = false AND article.content IS NOT NULL AND article.content <> ""
-                RETURN article.name as name, article.content as content
-            """
-            attached_results = tx.run(attached_content_query, ancestor_id=ancestor_id)
-            for record in attached_results:
-                attached_path = f"{current_path_slug} (attached: {record['name']})"
-                full_context_data.append({
-                    "path": attached_path,
-                    "content": record['content']
-                })
-        return full_context_data
-
-    with driver.session() as session:
-        context_data = session.read_transaction(fetch_context_ordered, node_id)
-        
-        output_parts = []
-        for item in context_data:
-            header = f"### Path: `{item['path']}`"
-            content = item['content']
-            output_parts.append(f"{header}\n\n{content}")
-            
-        full_context = "\n\n---\n\n".join(output_parts)
-        return jsonify({'context': full_context})
-
 
 @app.route('/api/upload/<node_id>', methods=['POST'])
 def upload_file_to_node(node_id):
@@ -308,7 +237,7 @@ def reinitialize_db():
         with driver.session() as session:
             session.run("MATCH (n) DETACH DELETE n")
             session.write_transaction(ensure_root_exists)
-        return jsonify({'success': True, 'message': 'Database wiped and re-initialized successfully.'})
+        return jsonify({'success': True, 'message': 'Database wiped and re-initialized.'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -317,11 +246,7 @@ def save_settings():
     settings = request.json
     for key, value in settings.items():
         set_key('.env', key, value)
-    
-    schedule.clear()
-    setup_scheduler()
-    
-    return jsonify({'success': True, 'message': 'Settings saved and scheduler updated.'})
+    return jsonify({'success': True, 'message': 'Settings saved.'})
 
 @app.route('/api/admin/run_job/<job_name>', methods=['POST'])
 def run_job(job_name):
@@ -347,17 +272,14 @@ def export_user_data():
                 YIELD file
                 RETURN file
             """).single()
-
             if result and result['file']:
                 return send_file(export_file_path, as_attachment=True, download_name='knowledgetree_export.json')
             else:
                  return jsonify({'success': False, 'error': 'Export failed or produced no data.'}), 500
     except Exception as e:
-        # Catch if APOC is not installed
         if "Failed to invoke procedure `apoc.export.json.query`" in str(e):
              return jsonify({'success': False, 'error': 'APOC extension not installed on Neo4j server.'}), 500
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/admin/import', methods=['POST'])
 def import_user_data():
@@ -368,12 +290,10 @@ def import_user_data():
         try:
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'import_data.json')
             file.save(file_path)
-
             with driver.session() as session:
                 session.run(f"""
                     CALL apoc.import.json("file://{os.path.abspath(file_path)}")
                 """)
-
             os.remove(file_path)
             return jsonify({'success': True})
         except Exception as e:
@@ -385,10 +305,4 @@ def import_user_data():
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
-    
-    setup_scheduler()
-    stop_run_continuously = run_continuously()
-    
     app.run(debug=True, port=5001)
-    
-    stop_run_continuously.set()

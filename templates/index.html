@@ -11,34 +11,45 @@
         <header>
             <h1><i class="fas fa-sitemap"></i> KnowledgeTree</h1>
             <div class="nav-bar">
-                <button id="back-btn" title="Go back"><i class="fas fa-arrow-left"></i></button>
-                <nav id="breadcrumb"></nav>
-                <input type="search" id="search-input" placeholder="Search from here down..." autocomplete="off" />
+                <a href="javascript:history.back()" id="back-btn" title="Go back"><i class="fas fa-arrow-left"></i></a>
+                <nav id="breadcrumb">
+                    {% for name in breadcrumb_names[1:] %}
+                        {% set path_slice = breadcrumb_names[1:loop.index+1] %}
+                        {% if not loop.last %}
+                            <a href="/browse/{{ path_slice | map('quote_plus') | join('/') }}">{{ name }}</a>
+                            <span>&gt;</span>
+                        {% else %}
+                            {{ name }}
+                        {% endif %}
+                    {% endfor %}
+                </nav>
+                <input type="search" id="search-input" placeholder="Search..." autocomplete="off" data-start-node="{{ current_node_id }}" />
                 <div id="search-results" style="display: none;"></div>
             </div>
         </header>
         <main id="file-browser-container">
             <div id="file-browser">
-                </div>
+                {% for item in items %}
+                    <div class="file-item {% if item.read_only %}read-only{% endif %}" data-name="{{ item.name }}" data-id="{{ item.id }}" data-is-folder="{{ item.is_folder|lower }}">
+                        {% if item.is_folder %}
+                            <i class="fas {% if item.is_attached %}fa-paperclip{% else %}fa-folder{% endif %}"></i>
+                        {% else %}
+                            <i class="fas fa-file-alt"></i>
+                        {% endif %}
+                        <span class="name">{{ item.name }}</span>
+                    </div>
+                {% endfor %}
+            </div>
         </main>
     </div>
-
-    <div id="context-menu" class="context-menu">
-        <ul>
-            <li id="context-open"><i class="fas fa-folder-open"></i> Open</li>
-            <li id="context-rename"><i class="fas fa-edit"></i> Rename</li>
-            <li id="context-delete"><i class="fas fa-trash"></i> Delete</li>
-            <hr>
-            <li id="context-new-folder"><i class="fas fa-folder-plus"></i> New Folder</li>
-            <li id="context-new-attached"><i class="fas fa-paperclip"></i> New Attached Folder</li>
-            <li id="context-new-article"><i class="fas fa-file-medical"></i> New Knowledge</li>
-        </ul>
-    </div>
-
     <footer>
-        <a href="/admin" class="admin-link">Admin Panel</a>
+        <a href="{{ url_for('admin_panel') }}" class="admin-link">Admin Panel</a>
     </footer>
 
+    <script>
+        // Pass the current path from the server to our JavaScript file.
+        const CURRENT_PATH = "{{ current_path }}";
+    </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
