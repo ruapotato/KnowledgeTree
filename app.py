@@ -51,11 +51,9 @@ def index():
 def browse(path):
     path_parts = [p for p in path.split('/') if p]
     
-    # Calculate the parent path for the back button
     parent_path = "/".join([quote(part) for part in path_parts[:-1]])
 
     with driver.session() as session:
-        # Resolve path to get the current node ID
         query = "MATCH (n0:ContextItem {id: 'root'})"
         match_clauses, where_clauses, params = [], [], {}
         for i, part in enumerate(path_parts):
@@ -70,7 +68,6 @@ def browse(path):
         result = session.run(full_query, params).single()
         node_id = result['id'] if result else 'root'
 
-        # Get children of the current node
         children_query = """
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
             RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, 
@@ -80,7 +77,6 @@ def browse(path):
         children_result = session.run(children_query, parent_id=node_id)
         items = [dict(record) for record in children_result]
 
-        # Get breadcrumb path for navigation
         path_query = """
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
             RETURN [n in nodes(path) | n.name] AS names
@@ -98,17 +94,20 @@ def browse(path):
 @app.route('/view/<node_id>')
 def view_node(node_id):
     with driver.session() as session:
+        # THE FIX: This query now finds the single shortest path to the node,
+        # which avoids ambiguity if a node has multiple parents. This resolves
+        # the Neo4j warning and the subsequent loading bug.
         path_query = """
-            MATCH (parent:ContextItem)-[:PARENT_OF]->(:ContextItem {id: $node_id})
-            WITH parent
-            MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(parent)
-            RETURN [n IN nodes(path) | n.name] AS names
+            MATCH p = shortestPath((:ContextItem {id: 'root'})-[:PARENT_OF*..]->(:ContextItem {id: $node_id}))
+            RETURN [n IN nodes(p) | n.name] AS names
         """
         result = session.run(path_query, node_id=node_id).single()
         
         parent_path = ''
         if result and result['names']:
-            parent_path = "/".join([quote(name) for name in result['names'][1:]])
+            # The parent path is all parts of the full path, except the root and the node itself.
+            parent_path_parts = result['names'][1:-1]
+            parent_path = "/".join([quote(name) for name in parent_path_parts])
 
     return render_template('view.html', node_id=node_id, parent_path=parent_path)
 

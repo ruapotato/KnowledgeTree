@@ -21,7 +21,6 @@ function initIndexPage() {
     let searchDebounceTimer;
     let selectedItemId = null;
 
-    // --- Event Listeners for Navigation ---
     if (fileBrowser) {
         fileBrowser.querySelectorAll('.file-item').forEach(item => {
             item.addEventListener('dblclick', () => {
@@ -39,23 +38,18 @@ function initIndexPage() {
         });
     }
 
-    // --- Context Menu Logic ---
     function showContextMenu(e) {
         e.preventDefault();
-        console.log("--- Context Menu Triggered ---"); // DEBUG
         const targetItem = e.target.closest('.file-item');
         
         if (!contextMenu) return;
-
         contextMenu.style.display = 'none';
 
         if (targetItem) {
-            console.log("DEBUG: Right-clicked on an item:", targetItem.dataset.name); // DEBUG
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
             targetItem.classList.add('selected');
             selectedItemId = targetItem.dataset.id;
         } else {
-            console.log("DEBUG: Right-clicked on empty space."); // DEBUG
             selectedItemId = null;
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
         }
@@ -65,9 +59,6 @@ function initIndexPage() {
         contextMenu.style.top = `${e.pageY}px`;
         
         const hasSelection = !!selectedItemId;
-        console.log("DEBUG: Has selection?", hasSelection); // DEBUG
-
-        // THE FIX: Use classList.toggle to correctly show/hide elements based on the .hidden class in style.css
         const openEl = document.getElementById('context-open');
         const renameEl = document.getElementById('context-rename');
         const deleteEl = document.getElementById('context-delete');
@@ -75,8 +66,6 @@ function initIndexPage() {
         if (openEl) openEl.classList.toggle('hidden', !hasSelection);
         if (renameEl) renameEl.classList.toggle('hidden', !hasSelection);
         if (deleteEl) deleteEl.classList.toggle('hidden', !hasSelection);
-        
-        console.log("DEBUG: Setting item-specific options visibility based on selection."); // DEBUG
     }
     
     if (fileBrowserContainer) {
@@ -99,14 +88,8 @@ function initIndexPage() {
             const response = await fetch('/api/node', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    name: name, 
-                    parent_id: CURRENT_NODE_ID, 
-                    is_folder: isFolder, 
-                    is_attached: isAttached 
-                })
+                body: JSON.stringify({ name, parent_id: CURRENT_NODE_ID, is_folder: isFolder, is_attached: isAttached })
             });
-
             if (response.ok) {
                 const result = await response.json();
                 if (!isFolder) {
@@ -157,57 +140,69 @@ function initIndexPage() {
         });
     }
 
-    // --- Search Logic ---
     async function performSearch(query) {
         if (!query || query.length < 2) {
             if (searchResultsContainer) searchResultsContainer.style.display = 'none';
             return;
         }
-        const startNodeId = searchInput.dataset.startNode;
-        const response = await fetch(`/api/search?query=${encodeURIComponent(query)}&start_node_id=${startNodeId}`);
-        const items = await response.json();
-        
-        if (searchResultsContainer) {
-            searchResultsContainer.innerHTML = '';
-            if (items.length === 0) {
-                searchResultsContainer.innerHTML = '<div class="search-item">No results found.</div>';
-            } else {
-                items.forEach(item => {
-                    const itemEl = document.createElement('div');
-                    itemEl.className = 'search-item';
-                    
-                    let iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
-                    let pathParts = item.folder_path.split('/').map(p => decodeURIComponent(p));
-                    let itemName = pathParts.pop() || '';
-                    let parentPath = pathParts.join(' / ');
-                    
-                    if (parentPath.length > 40) {
-                        parentPath = `...${parentPath.substring(parentPath.length - 37)}`;
-                    }
 
-                    itemEl.innerHTML = `
-                        <div>
-                            <span class="search-item-name"><i class="${iconClass}"></i> ${itemName}</span>
-                            <div class="search-item-path">${parentPath}</div>
-                        </div>
-                    `;
-                    
-                    itemEl.addEventListener('click', () => {
-                        if (item.is_folder) {
-                            window.location.href = `/browse/${item.folder_path}`;
-                        } else {
-                            window.location.href = `/view/${item.id}`;
-                        }
-                    });
-                    searchResultsContainer.appendChild(itemEl);
-                });
+        try {
+            const startNodeId = searchInput.dataset.startNode;
+            const response = await fetch(`/api/search?query=${encodeURIComponent(query)}&start_node_id=${startNodeId}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
-            searchResultsContainer.style.display = 'block';
+            const items = await response.json();
+            
+            if (searchResultsContainer) {
+                searchResultsContainer.innerHTML = '';
+                if (items.length === 0) {
+                    searchResultsContainer.innerHTML = '<div class="search-item">No results found.</div>';
+                } else {
+                    items.forEach(item => {
+                        const itemEl = document.createElement('div');
+                        itemEl.className = 'search-item';
+                        
+                        let iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
+                        let pathParts = item.folder_path.split('/').map(p => decodeURIComponent(p));
+                        let itemName = pathParts.pop() || '';
+                        let parentPath = pathParts.join(' / ');
+                        
+                        if (parentPath.length > 40) {
+                            parentPath = `...${parentPath.substring(parentPath.length - 37)}`;
+                        }
+
+                        itemEl.innerHTML = `
+                            <div>
+                                <span class="search-item-name"><i class="${iconClass}"></i> ${itemName}</span>
+                                <div class="search-item-path">${parentPath}</div>
+                            </div>
+                        `;
+                        
+                        itemEl.addEventListener('click', () => {
+                            if (item.is_folder) {
+                                window.location.href = `/browse/${item.folder_path}`;
+                            } else {
+                                window.location.href = `/view/${item.id}`;
+                            }
+                        });
+                        searchResultsContainer.appendChild(itemEl);
+                    });
+                }
+                searchResultsContainer.style.display = 'block';
+            }
+        } catch (error) {
+            console.error("Search failed:", error);
+            if(searchResultsContainer) {
+                searchResultsContainer.innerHTML = '<div class="search-item">Error during search.</div>';
+                searchResultsContainer.style.display = 'block';
+            }
         }
     }
 
     if (searchInput) {
         searchInput.addEventListener('input', () => {
+            console.log("Search input changed:", searchInput.value); // DEBUG
             clearTimeout(searchDebounceTimer);
             searchDebounceTimer = setTimeout(() => {
                 performSearch(searchInput.value.trim());
@@ -216,10 +211,123 @@ function initIndexPage() {
     }
 }
 
-
 /**
  * Logic for the knowledge article view page (view.html).
  */
 function initViewPage() {
-    // This function remains unchanged.
+    const nodeNameEl = document.getElementById('node-name');
+    const contentDisplayEl = document.getElementById('content-display');
+    const editorContainerEl = document.getElementById('editor-container');
+    const saveBtn = document.getElementById('save-btn');
+    const exportBtn = document.getElementById('export-context-btn');
+    const uploadBtn = document.getElementById('upload-btn');
+    const fileListEl = document.getElementById('file-list');
+    const fileInput = document.getElementById('file-upload-input');
+
+    async function loadNodeData() {
+        try {
+            const response = await fetch(`/api/node/${NODE_ID}`);
+            if (!response.ok) {
+                document.body.innerHTML = `<h1>Error: Not Found</h1><p>The requested item could not be found.</p><a href="/">Go to KnowledgeTree Home</a>`;
+                return;
+            }
+            const data = await response.json();
+
+            if (nodeNameEl) nodeNameEl.textContent = data.name;
+            document.title = data.name;
+            if (contentDisplayEl) contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Edit to add some.</p>';
+
+            if (fileListEl) {
+                fileListEl.innerHTML = '';
+                if (data.files && data.files.length > 0) {
+                    const ul = document.createElement('ul');
+                    data.files.forEach(file => {
+                        const li = document.createElement('li');
+                        const a = document.createElement('a');
+                        a.href = `/uploads/${file.filename}`;
+                        a.textContent = file.filename;
+                        a.target = '_blank';
+                        li.appendChild(a);
+                        ul.appendChild(li);
+                    });
+                    fileListEl.appendChild(ul);
+                } else {
+                    fileListEl.innerHTML = '<p>No files attached.</p>';
+                }
+            }
+
+            if (editorContainerEl) {
+                if (data.read_only) {
+                    editorContainerEl.style.display = 'none';
+                } else {
+                    editorContainerEl.style.display = 'block';
+                    const editor = new toastui.Editor({
+                        el: document.querySelector('#editor'),
+                        height: '600px',
+                        initialEditType: 'wysiwyg',
+                        previewStyle: 'tab',
+                        usageStatistics: false,
+                        initialValue: data.content || ''
+                    });
+
+                    if (saveBtn) {
+                        saveBtn.addEventListener('click', async () => {
+                            await fetch(`/api/node/${NODE_ID}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ content: editor.getMarkdown() })
+                            });
+                            alert('Content saved!');
+                            const updatedData = await (await fetch(`/api/node/${NODE_ID}`)).json();
+                            if (contentDisplayEl) contentDisplayEl.innerHTML = updatedData.content_html;
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Failed to load node data:", error);
+            if (nodeNameEl) nodeNameEl.textContent = "Error loading content.";
+        }
+    }
+
+    if (exportBtn) {
+        exportBtn.addEventListener('click', async () => {
+            const response = await fetch(`/api/context/${NODE_ID}`);
+            const data = await response.json();
+            try {
+                await navigator.clipboard.writeText(data.context);
+                exportBtn.textContent = 'Copied!';
+                setTimeout(() => { exportBtn.innerHTML = '<i class="fas fa-copy"></i> Export Full Context'; }, 2000);
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                alert('Failed to copy context.');
+            }
+        });
+    }
+    
+    if (uploadBtn) {
+        uploadBtn.addEventListener('click', async () => {
+            if (!fileInput || fileInput.files.length === 0) {
+                alert('Please select a file to upload.');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            const response = await fetch(`/api/upload/${NODE_ID}`, {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (response.ok) {
+                alert('File uploaded successfully!');
+                fileInput.value = '';
+                loadNodeData();
+            } else {
+                alert('File upload failed.');
+            }
+        });
+    }
+
+    loadNodeData();
 }
