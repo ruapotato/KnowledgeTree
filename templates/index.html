@@ -11,7 +11,16 @@
         <header>
             <h1><i class="fas fa-sitemap"></i> KnowledgeTree</h1>
             <div class="nav-bar">
-                <a href="javascript:history.back()" id="back-btn" title="Go back"><i class="fas fa-arrow-left"></i></a>
+                {% if current_path %}
+                    <a href="/browse/{{ parent_path }}" id="back-btn" title="Go up a level">
+                        <i class="fas fa-arrow-left"></i>
+                    </a>
+                {% else %}
+                    <span id="back-btn" class="disabled" title="At root level">
+                        <i class="fas fa-arrow-left"></i>
+                    </span>
+                {% endif %}
+
                 <nav id="breadcrumb">
                     {% for name in breadcrumb_names[1:] %}
                         {% set path_slice = breadcrumb_names[1:loop.index+1] %}
@@ -45,9 +54,9 @@
 
     <div id="context-menu" class="context-menu">
         <ul>
-            <li id="context-open"><i class="fas fa-folder-open"></i> Open</li>
-            <li id="context-rename"><i class="fas fa-edit"></i> Rename</li>
-            <li id="context-delete"><i class="fas fa-trash"></i> Delete</li>
+            <li id="context-open" class="hidden"><i class="fas fa-folder-open"></i> Open</li>
+            <li id="context-rename" class="hidden"><i class="fas fa-edit"></i> Rename</li>
+            <li id="context-delete" class="hidden"><i class="fas fa-trash"></i> Delete</li>
             <hr>
             <li id="context-new-folder"><i class="fas fa-folder-plus"></i> New Folder</li>
             <li id="context-new-attached"><i class="fas fa-paperclip"></i> New Attached Folder</li>
@@ -60,7 +69,6 @@
     </footer>
 
     <script>
-        // Pass data from server to JavaScript
         const CURRENT_PATH = "{{ current_path }}";
         const CURRENT_NODE_ID = "{{ current_node_id }}";
     </script>

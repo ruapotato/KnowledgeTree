@@ -51,7 +51,11 @@ def index():
 def browse(path):
     path_parts = [p for p in path.split('/') if p]
     
+    # Calculate the parent path for the back button
+    parent_path = "/".join([quote(part) for part in path_parts[:-1]])
+
     with driver.session() as session:
+        # Resolve path to get the current node ID
         query = "MATCH (n0:ContextItem {id: 'root'})"
         match_clauses, where_clauses, params = [], [], {}
         for i, part in enumerate(path_parts):
@@ -66,6 +70,7 @@ def browse(path):
         result = session.run(full_query, params).single()
         node_id = result['id'] if result else 'root'
 
+        # Get children of the current node
         children_query = """
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
             RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, 
@@ -75,6 +80,7 @@ def browse(path):
         children_result = session.run(children_query, parent_id=node_id)
         items = [dict(record) for record in children_result]
 
+        # Get breadcrumb path for navigation
         path_query = """
             MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
             RETURN [n in nodes(path) | n.name] AS names
@@ -86,7 +92,8 @@ def browse(path):
                            items=items, 
                            breadcrumb_names=breadcrumb_names, 
                            current_path=path,
-                           current_node_id=node_id)
+                           current_node_id=node_id,
+                           parent_path=parent_path)
 
 @app.route('/view/<node_id>')
 def view_node(node_id):
@@ -182,8 +189,6 @@ def create_node():
 @app.route('/api/node/<node_id>', methods=['GET'])
 def get_node(node_id):
     def fetch_node(tx, node_id):
-        # THE FIX: Restored the correct, detailed query that includes the 'files' collection.
-        # This was the cause of the "Loading..." bug.
         query = """
         MATCH (n:ContextItem {id: $node_id})
         OPTIONAL MATCH (n)-[:HAS_FILE]->(f:File)
