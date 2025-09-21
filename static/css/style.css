@@ -3,11 +3,12 @@
 
 :root {
     --bg-color: #f8f9fa;
-    --text-color: #212529;
+    --text-color: #343a40;
     --primary-color: #007bff;
     --border-color: #dee2e6;
     --card-bg: #ffffff;
-    --shadow: 0 2px 4px rgba(0,0,0,0.05);
+    --shadow: 0 4px 6px rgba(0,0,0,0.07);
+    --icon-size: 48px;
 }
 
 body {
@@ -17,6 +18,9 @@ body {
     margin: 0;
     padding: 2rem;
     line-height: 1.6;
+    -webkit-user-select: none; /* Safari */
+    -ms-user-select: none; /* IE 10+ */
+    user-select: none;
 }
 
 .container {
@@ -24,129 +28,119 @@ body {
     margin: 0 auto;
     background: var(--card-bg);
     padding: 2rem;
-    border-radius: 8px;
+    border-radius: 12px;
     box-shadow: var(--shadow);
 }
 
-header {
-    text-align: center;
-    margin-bottom: 2rem;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 1rem;
-}
-
 header h1 {
-    margin: 0;
+    margin: 0 0 1rem 0;
     color: var(--primary-color);
+    text-align: center;
 }
 
-main {
-    display: grid;
-    grid-template-columns: 1fr 300px;
-    gap: 2rem;
-}
-
-/* File Manager Styling */
-#file-manager ul {
-    list-style-type: none;
-    padding-left: 20px;
-}
-
-#file-manager li {
-    padding: 5px 0;
-}
-
-#file-manager a {
-    text-decoration: none;
-    color: var(--text-color);
-    transition: color 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    border-radius: 4px;
-}
-
-#file-manager a:hover {
+/* Breadcrumb Navigation */
+#breadcrumb {
     background-color: var(--bg-color);
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    margin-bottom: 2rem;
+    border: 1px solid var(--border-color);
+}
+#breadcrumb a {
+    text-decoration: none;
     color: var(--primary-color);
 }
-
-#file-manager .selected {
-    background-color: #e9ecef;
-    font-weight: 600;
+#breadcrumb span {
+    margin: 0 0.5rem;
+    color: #6c757d;
 }
 
-.actions {
+/* File Browser */
+#file-browser-container {
+    min-height: 50vh;
+}
+#file-browser {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 1.5rem;
     padding: 1rem;
-    background: var(--bg-color);
-    border-radius: 6px;
 }
-
-input[type="text"] {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    margin-bottom: 1rem;
-    box-sizing: border-box;
-}
-
-button {
-    background: var(--primary-color);
-    color: white;
-    border: none;
-    padding: 10px 15px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    width: 100%;
-    margin-top: 5px;
-}
-button:hover { background-color: #0056b3; }
-
-/* View Page Styling */
-.view-header {
+.file-item {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
     align-items: center;
-    margin-bottom: 2rem;
+    text-align: center;
+    padding: 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+    border: 2px solid transparent;
 }
+.file-item.selected {
+    background-color: #e9ecef;
+    border-color: var(--primary-color);
+}
+.file-item i {
+    font-size: var(--icon-size);
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+.file-item i.fa-file-alt {
+    color: #6c757d;
+}
+.file-item .name {
+    word-break: break-all;
+    font-size: 0.9rem;
+}
+
+/* Context Menu */
+.context-menu {
+    position: absolute;
+    display: none;
+    background: var(--card-bg);
+    border-radius: 6px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    border: 1px solid var(--border-color);
+    z-index: 1000;
+    padding: 8px 0;
+}
+.context-menu ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.context-menu li {
+    padding: 10px 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.context-menu li:hover {
+    background-color: var(--bg-color);
+}
+.context-menu hr {
+    margin: 5px 0;
+    border: none;
+    border-top: 1px solid var(--border-color);
+}
+.context-menu .disabled {
+    color: #adb5bd;
+    pointer-events: none;
+    background-color: transparent;
+}
+
+
+/* View Page Styling (from before, still relevant) */
+.view-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
 .view-header h1 { margin: 0; }
 .back-link { text-decoration: none; }
-
-#export-context-btn {
-    background-color: #28a745;
-    width: auto;
-}
+#export-context-btn { background-color: #28a745; width: auto; }
 #export-context-btn:hover { background-color: #218838; }
-
-.content-area, .attachments-area {
-    background: var(--bg-color);
-    padding: 1.5rem;
-    border-radius: 6px;
-    margin-bottom: 1.5rem;
-}
-/* Human-readable styling for rendered content */
-#content-display h1, #content-display h2, #content-display h3 {
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.5rem;
-    margin-top: 1.5rem;
-}
-#content-display code {
-    background: #e9ecef;
-    padding: 2px 5px;
-    border-radius: 4px;
-}
-#content-display pre {
-    background: #212529;
-    color: #f8f9fa;
-    padding: 1rem;
-    border-radius: 6px;
-    overflow-x: auto;
-}
-
-/* Clever hiding of editor for folders */
-.is-folder #editor-container, .is-folder #content-display {
-    display: none;
-}
+.content-area, .attachments-area { background: var(--bg-color); padding: 1.5rem; border-radius: 6px; margin-bottom: 1.5rem; }
+#content-display h1, #content-display h2, #content-display h3 { border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-top: 1.5rem; }
+#content-display code { background: #e9ecef; padding: 2px 5px; border-radius: 4px; }
+#content-display pre { background: #212529; color: #f8f9fa; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+.is-folder #editor-container, .is-folder #content-display { display: none; }
+button { background: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; transition: background-color 0.2s; }
+button:hover { background-color: #0056b3; }

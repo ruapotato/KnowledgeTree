@@ -1,7 +1,6 @@
 // static/js/main.js
 document.addEventListener('DOMContentLoaded', () => {
-    // Check which page we are on
-    if (document.getElementById('file-manager')) {
+    if (document.getElementById('file-browser')) {
         initIndexPage();
     }
     if (document.querySelector('.view-container')) {
@@ -9,85 +8,165 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-let selectedNodeId = 'root'; // Default to root
-
-// --- Index Page Logic ---
+// --- File Manager (Index Page) Logic ---
 function initIndexPage() {
-    const fileManager = document.getElementById('file-manager');
-    const newNodeNameInput = document.getElementById('new-node-name');
+    const fileBrowser = document.getElementById('file-browser');
+    const breadcrumb = document.getElementById('breadcrumb');
+    const contextMenu = document.getElementById('context-menu');
+    
+    let currentFolderId = 'root';
+    let selectedItemId = null;
+    let selectedItemIsFolder = false;
 
-    function renderTree(nodes, container) {
-        const ul = document.createElement('ul');
-        nodes.forEach(node => {
-            const li = document.createElement('li');
-            const a = document.createElement('a');
-            a.href = `/view/${node.id}`;
-            a.dataset.id = node.id;
+    async function navigateTo(folderId) {
+        currentFolderId = folderId;
+        selectedItemId = null;
+        await Promise.all([
+            renderItems(folderId),
+            renderBreadcrumb(folderId)
+        ]);
+    }
+
+    async function renderItems(folderId) {
+        const response = await fetch(`/api/nodes/${folderId}`);
+        const items = await response.json();
+        
+        fileBrowser.innerHTML = '';
+        items.forEach(item => {
+            const itemEl = document.createElement('div');
+            itemEl.className = 'file-item';
+            itemEl.dataset.id = item.id;
+            itemEl.dataset.isFolder = item.is_folder;
             
-            const icon = document.createElement('i');
-            icon.className = node.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
-            a.appendChild(icon);
-            a.appendChild(document.createTextNode(` ${node.name}`));
+            const iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
+            itemEl.innerHTML = `<i class="${iconClass}"></i><span class="name">${item.name}</span>`;
+            
+            // Single click: select
+            itemEl.addEventListener('click', () => {
+                document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
+                itemEl.classList.add('selected');
+                selectedItemId = item.id;
+                selectedItemIsFolder = item.is_folder;
+            });
 
-            // Click to select for adding new items
-            a.addEventListener('click', (e) => {
-                e.preventDefault(); // Prevent navigation
-                document.querySelectorAll('#file-manager a').forEach(el => el.classList.remove('selected'));
-                a.classList.add('selected');
-                selectedNodeId = node.id;
-                
-                // On double click, navigate to view page
-                if (a.dataset.clickedOnce) {
-                    window.location.href = a.href;
+            // Double click: navigate or open
+            itemEl.addEventListener('dblclick', () => {
+                if (item.is_folder) {
+                    navigateTo(item.id);
                 } else {
-                    a.dataset.clickedOnce = true;
-                    setTimeout(() => { a.dataset.clickedOnce = false; }, 300); // 300ms for double click
+                    window.location.href = `/view/${item.id}`;
                 }
             });
 
-            li.appendChild(a);
+            fileBrowser.appendChild(itemEl);
+        });
+    }
 
-            if (node.children && node.children.length > 0) {
-                renderTree(node.children, li);
+    async function renderBreadcrumb(folderId) {
+        const response = await fetch(`/api/path/${folderId}`);
+        const path = await response.json();
+
+        breadcrumb.innerHTML = '';
+        path.forEach((segment, index) => {
+            if (index < path.length - 1) {
+                const link = document.createElement('a');
+                link.href = '#';
+                link.textContent = segment.name;
+                link.onclick = (e) => {
+                    e.preventDefault();
+                    navigateTo(segment.id);
+                };
+                breadcrumb.appendChild(link);
+                breadcrumb.appendChild(document.createElement('span')).textContent = '>';
+            } else {
+                breadcrumb.appendChild(document.createTextNode(` ${segment.name}`));
             }
-            ul.appendChild(li);
         });
-        container.appendChild(ul);
     }
 
-    async function loadTree() {
-        const response = await fetch('/api/tree');
-        const treeData = await response.json();
-        fileManager.innerHTML = '';
-        renderTree(treeData, fileManager);
-        // Auto-select root initially
-        const rootLink = fileManager.querySelector('a[data-id="root"]');
-        if (rootLink) rootLink.classList.add('selected');
-    }
-    
-    async function createNode(isFolder) {
-        const name = newNodeNameInput.value.trim();
-        if (!name) {
-            alert('Please enter a name.');
-            return;
+    // --- Context Menu Logic ---
+    function showContextMenu(e) {
+        e.preventDefault();
+        contextMenu.style.display = 'block';
+        contextMenu.style.left = `${e.pageX}px`;
+        contextMenu.style.top = `${e.pageY}px`;
+
+        const targetItem = e.target.closest('.file-item');
+        if (targetItem) {
+            // Right-clicked on an item
+            targetItem.click(); // Select it
+            document.getElementById('context-open').classList.remove('disabled');
+            document.getElementById('context-rename').classList.remove('disabled');
+            document.getElementById('context-delete').classList.remove('disabled');
+        } else {
+            // Right-clicked on the background
+            selectedItemId = null;
+            document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
+            document.getElementById('context-open').classList.add('disabled');
+            document.getElementById('context-rename').classList.add('disabled');
+            document.getElementById('context-delete').classList.add('disabled');
         }
-        await fetch('/api/node', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, parent_id: selectedNodeId, is_folder: isFolder })
-        });
-        newNodeNameInput.value = '';
-        loadTree(); // Refresh tree
     }
 
-    document.getElementById('add-article-btn').addEventListener('click', () => createNode(false));
-    document.getElementById('add-folder-btn').addEventListener('click', () => createNode(true));
+    document.getElementById('file-browser-container').addEventListener('contextmenu', showContextMenu);
+    document.addEventListener('click', () => contextMenu.style.display = 'none');
+
+    // --- Context Menu Actions ---
+    async function createNewItem(isFolder) {
+        const name = prompt(`Enter name for new ${isFolder ? 'folder' : 'knowledge'}:`);
+        if (name) {
+            await fetch('/api/node', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, parent_id: currentFolderId, is_folder: isFolder })
+            });
+            renderItems(currentFolderId);
+        }
+    }
+
+    async function renameItem() {
+        if (!selectedItemId) return;
+        const currentName = document.querySelector(`.file-item[data-id="${selectedItemId}"] .name`).textContent;
+        const newName = prompt("Enter new name:", currentName);
+        if (newName && newName !== currentName) {
+            await fetch(`/api/node/${selectedItemId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName })
+            });
+            renderItems(currentFolderId);
+        }
+    }
+
+    async function deleteItem() {
+        if (!selectedItemId) return;
+        if (confirm("Are you sure you want to delete this item and all its contents?")) {
+            await fetch(`/api/node/${selectedItemId}`, { method: 'DELETE' });
+            renderItems(currentFolderId);
+        }
+    }
     
-    loadTree();
+    document.getElementById('context-new-folder').onclick = () => createNewItem(true);
+    document.getElementById('context-new-article').onclick = () => createNewItem(false);
+    document.getElementById('context-rename').onclick = renameItem;
+    document.getElementById('context-delete').onclick = deleteItem;
+    document.getElementById('context-open').onclick = () => {
+        if (selectedItemId) {
+            if (selectedItemIsFolder) {
+                navigateTo(selectedItemId);
+            } else {
+                window.location.href = `/view/${selectedItemId}`;
+            }
+        }
+    };
+
+
+    // Initial load
+    navigateTo('root');
 }
 
 
-// --- View Page Logic ---
+// --- View Page Logic (largely unchanged) ---
 function initViewPage() {
     const nodeNameEl = document.getElementById('node-name');
     const contentDisplayEl = document.getElementById('content-display');
@@ -101,16 +180,10 @@ function initViewPage() {
     async function loadNodeData() {
         const response = await fetch(`/api/node/${NODE_ID}`);
         const data = await response.json();
-
         nodeNameEl.textContent = data.name;
-        contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Click Edit to add some.</p>';
+        contentDisplayEl.innerHTML = data.content_html || '<p>No content yet. Edit to add some.</p>';
         mde.value(data.content || '');
-
-        if (data.is_folder) {
-            document.body.classList.add('is-folder');
-        }
-
-        // Display files
+        if (data.is_folder) document.body.classList.add('is-folder');
         fileListEl.innerHTML = '';
         if (data.files && data.files.length > 0) {
             const ul = document.createElement('ul');
@@ -128,7 +201,6 @@ function initViewPage() {
             fileListEl.innerHTML = '<p>No files attached.</p>';
         }
     }
-
     saveBtn.addEventListener('click', async () => {
         await fetch(`/api/node/${NODE_ID}`, {
             method: 'PUT',
@@ -136,9 +208,8 @@ function initViewPage() {
             body: JSON.stringify({ content: mde.value() })
         });
         alert('Content saved!');
-        loadNodeData(); // Refresh displayed content
+        loadNodeData();
     });
-
     exportBtn.addEventListener('click', async () => {
         const response = await fetch(`/api/context/${NODE_ID}`);
         const data = await response.json();
@@ -147,33 +218,21 @@ function initViewPage() {
             exportBtn.textContent = 'Copied!';
             setTimeout(() => { exportBtn.innerHTML = '<i class="fas fa-copy"></i> Export Full Context'; }, 2000);
         } catch (err) {
-            console.error('Failed to copy text: ', err);
             alert('Failed to copy context.');
         }
     });
-
     uploadBtn.addEventListener('click', async () => {
         const fileInput = document.getElementById('file-upload-input');
-        if (fileInput.files.length === 0) {
-            alert('Please select a file to upload.');
-            return;
-        }
+        if (fileInput.files.length === 0) return;
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
-
-        const response = await fetch(`/api/upload/${NODE_ID}`, {
-            method: 'POST',
-            body: formData
-        });
-        
+        const response = await fetch(`/api/upload/${NODE_ID}`, { method: 'POST', body: formData });
         if (response.ok) {
-            alert('File uploaded successfully!');
-            fileInput.value = ''; // Clear the input
-            loadNodeData(); // Refresh the file list
+            fileInput.value = '';
+            loadNodeData();
         } else {
             alert('File upload failed.');
         }
     });
-
     loadNodeData();
 }

@@ -44,27 +44,34 @@ def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # --- API Endpoints ---
-@app.route('/api/tree', methods=['GET'])
-def get_tree():
-    """Fetches the entire hierarchy for the file manager view."""
-    def fetch_children(tx, node_id):
-        query = """
-        MATCH (parent:ContextItem {id: $node_id})-[r:PARENT_OF]->(child:ContextItem)
-        RETURN child.id AS id, child.name AS name, child.is_folder AS is_folder
-        ORDER BY child.is_folder DESC, child.name
-        """
-        results = tx.run(query, node_id=node_id)
-        children = []
-        for record in results:
-            child_data = dict(record)
-            child_data['children'] = fetch_children(tx, record['id'])
-            children.append(child_data)
-        return children
+@app.route('/api/nodes/<parent_id>', methods=['GET'])
+def get_nodes_in_folder(parent_id):
+    """Fetches the immediate children of a given parent node."""
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child:ContextItem)
+            RETURN child.id AS id, child.name AS name, child.is_folder AS is_folder
+            ORDER BY child.is_folder DESC, child.name
+        """, parent_id=parent_id)
+        return jsonify([dict(record) for record in result])
+
+@app.route('/api/path/<node_id>', methods=['GET'])
+def get_path(node_id):
+    """Gets the full path (breadcrumbs) to a node."""
+    if node_id == 'root':
+         with driver.session() as session:
+            root_node = session.run("MATCH (n:ContextItem {id: 'root'}) RETURN n.id as id, n.name as name").single()
+            return jsonify([dict(root_node)])
 
     with driver.session() as session:
-        root_children = session.read_transaction(fetch_children, 'root')
-        tree = [{'id': 'root', 'name': 'KnowledgeTree Root', 'is_folder': True, 'children': root_children}]
-        return jsonify(tree)
+        result = session.run("""
+            MATCH path = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
+            WITH nodes(path) AS path_nodes
+            UNWIND path_nodes as node
+            RETURN node.id AS id, node.name AS name
+        """, node_id=node_id)
+        return jsonify([dict(record) for record in result])
+
 
 @app.route('/api/node/<node_id>', methods=['GET'])
 def get_node(node_id):
@@ -79,9 +86,7 @@ def get_node(node_id):
         result = tx.run(query, node_id=node_id).single()
         if result:
             data = dict(result)
-            # Convert markdown content to HTML for display
             data['content_html'] = markdown.markdown(data.get('content', ''), extensions=['fenced_code', 'tables'])
-            # Filter out empty file objects if no files are attached
             data['files'] = [file for file in data.get('files', []) if file and file.get('id')]
             return data
         return None
@@ -94,7 +99,7 @@ def get_node(node_id):
 def create_node():
     """Creates a new node (article or folder)."""
     data = request.json
-    parent_id = data.get('parent_id')
+    parent_id = data.get('parent_id', 'root')
     name = data.get('name')
     is_folder = data.get('is_folder', False)
     new_id = str(uuid.uuid4())
@@ -109,12 +114,27 @@ def create_node():
 
 @app.route('/api/node/<node_id>', methods=['PUT'])
 def update_node(node_id):
-    """Updates a node's content."""
+    """Updates a node's content or name."""
     data = request.json
-    content = data.get('content')
     with driver.session() as session:
-        session.run("MATCH (n:ContextItem {id: $id}) SET n.content = $content", id=node_id, content=content)
+        if 'content' in data:
+            session.run("MATCH (n:ContextItem {id: $id}) SET n.content = $content", id=node_id, content=data['content'])
+        if 'name' in data:
+            session.run("MATCH (n:ContextItem {id: $id}) SET n.name = $name", id=node_id, name=data['name'])
     return jsonify({'success': True})
+
+@app.route('/api/node/<node_id>', methods=['DELETE'])
+def delete_node(node_id):
+    """Deletes a node and all its children."""
+    with driver.session() as session:
+        # This query finds the node, finds all children recursively, and deletes them all.
+        session.run("""
+            MATCH (n:ContextItem {id: $node_id})
+            OPTIONAL MATCH (n)-[:PARENT_OF*0..]->(child)
+            DETACH DELETE n, child
+        """, id=node_id)
+    return jsonify({'success': True})
+
 
 @app.route('/api/context/<node_id>', methods=['GET'])
 def get_context(node_id):
@@ -139,26 +159,21 @@ def get_context(node_id):
 
 @app.route('/api/upload/<node_id>', methods=['POST'])
 def upload_file_to_node(node_id):
-    """Handles file uploads and attaches them to a node."""
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
     if file:
-        filename = file.filename # In a real app, sanitize this!
+        filename = file.filename
         file_id = str(uuid.uuid4())
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        
         with driver.session() as session:
             session.run("""
                 MATCH (n:ContextItem {id: $node_id})
                 CREATE (f:File {id: $file_id, filename: $filename})
                 CREATE (n)-[:HAS_FILE]->(f)
             """, node_id=node_id, file_id=file_id, filename=filename)
-
         return jsonify({'success': True, 'filename': filename})
+    return jsonify({'error': 'File upload failed'}), 500
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
