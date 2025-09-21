@@ -1,27 +1,34 @@
 
 # KnowledgeTree - A Context-Aware Knowledge Graph
 
-KnowledgeTree is a web application for building hierarchical knowledge bases. Unlike a standard wiki, KnowledgeTree understands the parent-child relationships between articles, allowing users to export a full "context stack" for any given piece of information. This is designed for piping rich, layered context into AI tools and APIs.
+KnowledgeTree is a web application for building hierarchical knowledge bases. Unlike a standard wiki, KnowledgeTree understands the full context of any piece of information within its hierarchy. It allows users to export a complete "context stack" that includes not only an article's direct lineage but also all sibling articles and content from linked folders. This is designed for piping rich, layered, and comprehensive context into AI tools and APIs.
 
-It uses a familiar, intuitive file-manager interface for organizing knowledge and automatically populates itself with data from external services like Freshservice and Datto RMM.
+It uses a familiar, intuitive file-manager interface for organizing knowledge and can automatically populate itself with data from external services like Freshservice and Datto RMM.
 
-## Features ✨
+## The Context Engine ✨
+
+The core of KnowledgeTree is its ability to generate a complete contextual snapshot for any article with a single click. When you export the context, you get a clean, markdown-formatted document containing:
+
+-   **Full Ancestry**: Content from every article in the direct path from the root to the parent of your current location.
+    
+-   **Complete Sibling Data**: The content of all "brother and sister" articles that share the same parent folder, at every level of the hierarchy.
+    
+-   **Attached Folder Content**: Information from special "attached" folders is seamlessly included as if it were part of the parent folder's main content.
+    
+-   **File Attachments**: A list of any files attached to the specific article you are viewing.
+    
+
+This process ensures that when you provide the context to an AI, it has all the relevant information from the entire knowledge structure, not just a single article.
+
+## Features
 
 -   **Automated Data Sync**: Automatically pulls in and structures company, user, and asset data from **Freshservice** and **Datto RMM**, creating a single source of truth.
     
--   **Rich Text Editor**: A beautiful WYSIWYG editor that makes writing feel natural, with a "Markdown" tab for power users who want to work with the raw source.
+-   **Rich Text Editor**: A beautiful WYSIWYG editor that makes writing feel natural, with a "Markdown" tab for power users.
     
--   **Intuitive File Management**: Organize articles and folders with a classic file-browser interface:
+-   **Intuitive File Management**: Organize articles and folders with a classic file-browser interface, including single-click to select, double-click to open, and a full right-click context menu.
     
-    -   Single-click to select.
-        
-    -   Double-click to open folders or articles.
-        
-    -   Right-click for a full context menu (Create, Rename, Delete).
-        
 -   **Attached Folders (Context Linking)**: Create special "paperclip" folders that link context from one part of the tree to another, allowing for organized, reusable information.
-    
--   **Hierarchical Context Export**: The core feature! Copy the entire chain of knowledge from the root to the current article with one click, perfectly formatted with path headers for AI prompts.
     
 -   **File Attachments**: Upload and attach relevant files and images to any knowledge article.
     
@@ -40,9 +47,7 @@ KnowledgeTree includes scripts to keep your knowledge base up-to-date automatica
         
     -   Creates a folder for each company under `/Companies/`.
         
-    -   Inside each company folder, it creates a `/Users/` directory.
-        
-    -   Inside the `/Users/` directory, it creates a folder for each user, containing a `Contact.md` file with their details.
+    -   Inside each company folder, it creates a `/Users/` directory and populates it with a folder for each user, containing a `Contact.md` file with their details.
         
 -   **Datto RMM Sync**:
     
@@ -116,30 +121,7 @@ This project is licensed under the **GNU Affero General Public License v3.0**. S
         
     -   Set the initial password by running `cypher-shell -u neo4j -p neo4j` and following the prompts.
         
-4.  **Create `.env` file:** In the project's root directory, create a `.env` file. Add your credentials and API keys.
-    
-    Code snippet
-    
-    ```
-    # Neo4j Credentials
-    NEO4J_URI=bolt://localhost:7687
-    NEO4J_USER=neo4j
-    NEO4J_PASSWORD=your_new_super_secret_password
-    
-    # Freshservice API
-    FRESHSERVICE_DOMAIN=your_domain.freshservice.com
-    FRESHSERVICE_API_KEY=your_freshservice_api_key
-    
-    # Datto RMM API
-    DATTO_API_ENDPOINT=https://api.datto.com
-    DATTO_API_KEY=your_datto_api_key
-    DATTO_API_SECRET=your_datto_api_secret
-    
-    # Scheduler Intervals (Optional, defaults to 1440 minutes / 24 hours)
-    FRESHSERVICE_PULL_INTERVAL=1440
-    DATTO_PULL_INTERVAL=1440
-    
-    ```
+4.  **Create `.env` file:** In the project's root directory, create a `.env` file and add your credentials and API keys for Neo4j, Freshservice, and Datto RMM.
     
 5.  **Run the application:**
     
@@ -150,6 +132,4 @@ This project is licensed under the **GNU Affero General Public License v3.0**. S
     
     ```
     
-    The application will be available at `http://127.0.0.1:5001`.
-    
-6.  **(Optional) First Run / Reset:** Navigate to `http://127.0.0.1:5001/admin` to wipe the database for a clean start. Then, go to `http://127.0.0.1:5001/admin/settings` to trigger the initial data syncs.
+6.  **(Optional) First Run / Reset:** Navigate to `/admin` to wipe the database for a clean start. Then, go to `/admin/settings` to trigger the initial data syncs.
