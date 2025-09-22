@@ -31,8 +31,25 @@ def ensure_root_exists(tx):
         ON CREATE SET r.content = '# Welcome to KnowledgeTree', r.is_folder = true, r.is_attached = false
     """)
 
+def prime_database_schema(tx):
+    """
+    Creates and immediately deletes a dummy file node and relationship.
+    This "primes" the database with the necessary labels and relationship types,
+    preventing "UnknownLabelWarning" and "UnknownRelationshipTypeWarning"
+    on a fresh database.
+    """
+    tx.run("""
+        MERGE (dummy_parent:ContextItem {id: 'schema_primer_parent'})
+        CREATE (dummy_file:File {id: 'schema_primer_file', filename: 'dummy.txt'})
+        CREATE (dummy_parent)-[:HAS_FILE]->(dummy_file)
+        DETACH DELETE dummy_parent, dummy_file
+    """)
+
 with driver.session() as session:
     session.write_transaction(ensure_root_exists)
+    # **THE FIX**: Prime the database schema on startup.
+    session.write_transaction(prime_database_schema)
+
 
 # --- URL Generation Helper ---
 @app.template_filter('quote_plus')
@@ -50,7 +67,7 @@ def index():
 @app.route('/browse/<path:path>')
 def browse(path):
     path_parts = [p for p in path.split('/') if p]
-    
+
     parent_path = "/".join([quote(part) for part in path_parts[:-1]])
 
     with driver.session() as session:
@@ -62,15 +79,15 @@ def browse(path):
             match_clauses.append(f"MATCH ({prev_node})-[:PARENT_OF]->({curr_node})")
             where_clauses.append(f"{curr_node}.name = ${param_name}")
             params[param_name] = unquote(part)
-        
+
         full_query = "\n".join([query] + match_clauses) + ("\nWHERE " + " AND ".join(where_clauses) if where_clauses else "") + f"\nRETURN n{len(path_parts)}.id as id"
-        
+
         result = session.run(full_query, params).single()
         node_id = result['id'] if result else 'root'
 
         children_query = """
             MATCH (:ContextItem {id: $parent_id})-[:PARENT_OF]->(child)
-            RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder, 
+            RETURN DISTINCT child.id AS id, child.name AS name, child.is_folder AS is_folder,
                    child.is_attached as is_attached, child.read_only as read_only
             ORDER BY child.is_folder DESC, child.name
         """
@@ -84,9 +101,9 @@ def browse(path):
         path_result = session.run(path_query, node_id=node_id).single()
         breadcrumb_names = path_result['names'] if path_result else ["KnowledgeTree Root"]
 
-    return render_template('index.html', 
-                           items=items, 
-                           breadcrumb_names=breadcrumb_names, 
+    return render_template('index.html',
+                           items=items,
+                           breadcrumb_names=breadcrumb_names,
                            current_path=path,
                            current_node_id=node_id,
                            parent_path=parent_path)
@@ -94,18 +111,14 @@ def browse(path):
 @app.route('/view/<node_id>')
 def view_node(node_id):
     with driver.session() as session:
-        # THE FIX: This query now finds the single shortest path to the node,
-        # which avoids ambiguity if a node has multiple parents. This resolves
-        # the Neo4j warning and the subsequent loading bug.
         path_query = """
             MATCH p = shortestPath((:ContextItem {id: 'root'})-[:PARENT_OF*..]->(:ContextItem {id: $node_id}))
             RETURN [n IN nodes(p) | n.name] AS names
         """
         result = session.run(path_query, node_id=node_id).single()
-        
+
         parent_path = ''
         if result and result['names']:
-            # The parent path is all parts of the full path, except the root and the node itself.
             parent_path_parts = result['names'][1:-1]
             parent_path = "/".join([quote(name) for name in parent_path_parts])
 
@@ -146,7 +159,7 @@ def search_nodes():
                    [n IN nodes(p) | n.name] AS path_names
             LIMIT 15
             """, {'start_node_id': start_node_id, 'query': query})
-        
+
         processed_results = []
         for record in result:
             record_dict = dict(record)
@@ -173,11 +186,11 @@ def create_node():
         session.run("""
             MATCH (parent:ContextItem {id: $parent_id})
             CREATE (child:ContextItem {
-                id: $id, 
-                name: $name, 
-                is_folder: $is_folder, 
-                content: '', 
-                is_attached: $is_attached, 
+                id: $id,
+                name: $name,
+                is_folder: $is_folder,
+                content: '',
+                is_attached: $is_attached,
                 read_only: false
             })
             CREATE (parent)-[:PARENT_OF]->(child)
@@ -191,7 +204,7 @@ def get_node(node_id):
         query = """
         MATCH (n:ContextItem {id: $node_id})
         OPTIONAL MATCH (n)-[:HAS_FILE]->(f:File)
-        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder, 
+        RETURN n.id AS id, n.name AS name, n.content AS content, n.is_folder AS is_folder,
                n.is_attached as is_attached, n.read_only as read_only,
                collect({id: f.id, filename: f.filename}) AS files
         """
@@ -203,7 +216,7 @@ def get_node(node_id):
             data['files'] = [f for f in data.get('files', []) if f['id'] is not None]
             return data
         return None
-    
+
     with driver.session() as session:
         node_data = session.read_transaction(fetch_node, node_id)
         if node_data:
@@ -216,10 +229,10 @@ def update_node(node_id):
     data = request.json
     with driver.session() as session:
         if 'content' in data:
-            session.run("MATCH (n:ContextItem {id: $id}) SET n.content = $content", 
+            session.run("MATCH (n:ContextItem {id: $id}) SET n.content = $content",
                         id=node_id, content=data['content'])
         if 'name' in data:
-            session.run("MATCH (n:ContextItem {id: $id}) SET n.name = $name", 
+            session.run("MATCH (n:ContextItem {id: $id}) SET n.name = $name",
                         id=node_id, name=data['name'])
     return jsonify({'success': True})
 
@@ -287,7 +300,7 @@ def export_user_data():
                 WHERE (n.read_only IS NULL OR n.read_only = false) AND n.is_folder = false
                 RETURN [node IN nodes(p) | node.name] AS path_parts, n.content AS content
             """)
-            
+
             export_data = []
             for record in result:
                 file_path = "/".join(record['path_parts'][1:])
@@ -313,13 +326,13 @@ def import_user_data():
     if file:
         try:
             import_data = json.load(file)
-            
+
             with driver.session() as session:
                 with session.begin_transaction() as tx:
                     for item in import_data:
                         path_parts = item['path'].split('/')
                         content = item['content']
-                        
+
                         file_name = path_parts.pop()
                         current_parent_id = 'root'
 
@@ -339,7 +352,7 @@ def import_user_data():
                                     CREATE (parent)-[:PARENT_OF]->(child)
                                 """, parent_id=current_parent_id, id=new_folder_id, name=folder_name)
                                 current_parent_id = new_folder_id
-                        
+
                         tx.run("""
                             MATCH (parent:ContextItem {id: $parent_id})
                             MERGE (file:ContextItem {name: $name, parent_id_for_merge: $parent_id})
@@ -352,19 +365,13 @@ def import_user_data():
 
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
-            
+
     return jsonify({'error': 'File import failed'}), 500
 
 @app.route('/api/context/<node_id>', methods=['GET'])
 def get_context(node_id):
-    """
-    Exports the full context for a given node as a markdown formatted string.
-    This includes all articles within every parent directory up to the root,
-    and the content from any "attached" folders.
-    """
     context_parts = []
     with driver.session() as session:
-        # 1. Get all nodes on the path from the root to the current node
         path_query = """
             MATCH p = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
             RETURN nodes(p) AS path_nodes
@@ -374,20 +381,15 @@ def get_context(node_id):
             return jsonify({'error': 'Node not found'}), 404
 
         path_nodes = result['path_nodes']
-        
-        # 2. Iterate through each folder on the path and gather its content in markdown format
+
         for i, node in enumerate(path_nodes):
             if node['is_folder']:
-                # Use a top-level heading for the root and subsequent headings for subfolders
                 heading_level = '#' * (i + 1)
-                
-                # We only need the name of the last part of the path for the heading
                 header = f"{heading_level} Context: {node['name']}"
                 context_parts.append(header)
-                
+
                 folder_id = node['id']
-                
-                # 3. Get direct articles AND articles from any attached folders
+
                 articles_query = """
                     MATCH (folder:ContextItem {id: $folder_id})-[:PARENT_OF]->(article:ContextItem)
                     WHERE article.is_folder = false AND (article.is_attached IS NULL OR article.is_attached = false)
@@ -399,27 +401,25 @@ def get_context(node_id):
                     RETURN article.name AS name, article.content AS content, attached.name AS source_folder
                 """
                 articles_result = session.run(articles_query, folder_id=folder_id)
-                
+
                 folder_content = []
                 for record in articles_result:
-                    # Use a sub-heading for each file
                     file_header = f"{heading_level}# File: {record['name']}"
                     if record['source_folder']:
                         file_header += f" (from attached folder: {record['source_folder']})"
-                    
+
                     folder_content.append(file_header)
                     folder_content.append(record['content'] or "> No content.")
-                
+
                 if folder_content:
                     context_parts.append("\n\n".join(folder_content))
 
-        # 4. Get any files attached directly to the specific node and format as a markdown list
         files_query = """
-            MATCH (:ContextItem {id: $node_id})-[:HAS_FILE]->(f:File)
+            OPTIONAL MATCH (:ContextItem {id: $node_id})-[:HAS_FILE]->(f:File)
             RETURN f.filename as filename
         """
         files_result = session.run(files_query, node_id=node_id)
-        filenames = [record['filename'] for record in files_result]
+        filenames = [record['filename'] for record in files_result if record['filename'] is not None]
         if filenames:
             context_parts.append(f"## Attached Files for {path_nodes[-1]['name']}")
             file_list = [f"- {name}" for name in filenames]
@@ -432,4 +432,4 @@ def get_context(node_id):
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
-    app.run(debug=True, port=5001)
+    app.run(host='0.0.0.0', port=5001, debug=True)

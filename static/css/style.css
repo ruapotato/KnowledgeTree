@@ -193,7 +193,7 @@ header h1 {
 button { background: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; transition: background-color 0.2s; }
 button:hover { background-color: #0056b3; }
 
-/* **NEW**: Style for the editor and its save button */
+/* Style for the editor and its save button */
 #editor-container #save-btn {
     margin-top: 1rem;
     width: auto;
@@ -244,6 +244,73 @@ button:hover { background-color: #0056b3; }
     border: 1px solid var(--border-color);
     border-radius: 4px;
 }
+
+/* **THE FIX**: New and improved modal styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.6); /* Darker overlay */
+    padding-top: 60px; /* Give it some space from the top */
+}
+
+.modal-content {
+    background-color: var(--card-bg);
+    margin: 5% auto; /* Centered vertically */
+    padding: 2rem;
+    border: 1px solid var(--border-color);
+    width: 80%;
+    max-width: 800px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    position: relative;
+    animation-name: animatetop;
+    animation-duration: 0.4s;
+}
+
+/* Add Animation */
+@keyframes animatetop {
+  from {top: -300px; opacity: 0}
+  to {top: 0; opacity: 1}
+}
+
+.close-btn {
+    color: var(--secondary-color);
+    position: absolute;
+    top: 1rem;
+    right: 1.5rem;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+.close-btn:hover,
+.close-btn:focus {
+    color: var(--text-color);
+}
+
+#modal-message {
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+#context-textarea {
+    width: 100%;
+    height: 400px;
+    margin-top: 1rem;
+    box-sizing: border-box; /* Important for padding */
+    font-family: monospace;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.5rem;
+    resize: vertical; /* Allow user to resize it vertically */
+}
+
 
 footer {
     text-align: center;

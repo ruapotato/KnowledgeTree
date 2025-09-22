@@ -41,7 +41,7 @@ function initIndexPage() {
     function showContextMenu(e) {
         e.preventDefault();
         const targetItem = e.target.closest('.file-item');
-        
+
         if (!contextMenu) return;
         contextMenu.style.display = 'none';
 
@@ -53,11 +53,11 @@ function initIndexPage() {
             selectedItemId = null;
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
         }
-        
+
         contextMenu.style.display = 'block';
         contextMenu.style.left = `${e.pageX}px`;
         contextMenu.style.top = `${e.pageY}px`;
-        
+
         const hasSelection = !!selectedItemId;
         const openEl = document.getElementById('context-open');
         const renameEl = document.getElementById('context-rename');
@@ -67,11 +67,11 @@ function initIndexPage() {
         if (renameEl) renameEl.classList.toggle('hidden', !hasSelection);
         if (deleteEl) deleteEl.classList.toggle('hidden', !hasSelection);
     }
-    
+
     if (fileBrowserContainer) {
         fileBrowserContainer.addEventListener('contextmenu', showContextMenu);
     }
-    
+
     document.addEventListener('click', (e) => {
         if (contextMenu && !contextMenu.contains(e.target)) {
             contextMenu.style.display = 'none';
@@ -80,7 +80,7 @@ function initIndexPage() {
             searchResultsContainer.style.display = 'none';
         }
     });
-    
+
     async function createNewItem(isFolder, isAttached = false) {
         const type = isAttached ? 'attached folder' : (isFolder ? 'folder' : 'knowledge');
         const name = prompt(`Enter name for new ${type}:`);
@@ -125,7 +125,7 @@ function initIndexPage() {
             window.location.reload();
         }
     }
-    
+
     if (contextMenu) {
         document.getElementById('context-new-folder')?.addEventListener('click', () => createNewItem(true, false));
         document.getElementById('context-new-attached')?.addEventListener('click', () => createNewItem(true, true));
@@ -153,7 +153,7 @@ function initIndexPage() {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const items = await response.json();
-            
+
             if (searchResultsContainer) {
                 searchResultsContainer.innerHTML = '';
                 if (items.length === 0) {
@@ -162,12 +162,12 @@ function initIndexPage() {
                     items.forEach(item => {
                         const itemEl = document.createElement('div');
                         itemEl.className = 'search-item';
-                        
+
                         let iconClass = item.is_folder ? 'fas fa-folder' : 'fas fa-file-alt';
                         let pathParts = item.folder_path.split('/').map(p => decodeURIComponent(p));
                         let itemName = pathParts.pop() || '';
                         let parentPath = pathParts.join(' / ');
-                        
+
                         if (parentPath.length > 40) {
                             parentPath = `...${parentPath.substring(parentPath.length - 37)}`;
                         }
@@ -178,7 +178,7 @@ function initIndexPage() {
                                 <div class="search-item-path">${parentPath}</div>
                             </div>
                         `;
-                        
+
                         itemEl.addEventListener('click', () => {
                             if (item.is_folder) {
                                 window.location.href = `/browse/${item.folder_path}`;
@@ -202,7 +202,6 @@ function initIndexPage() {
 
     if (searchInput) {
         searchInput.addEventListener('input', () => {
-            console.log("Search input changed:", searchInput.value); // DEBUG
             clearTimeout(searchDebounceTimer);
             searchDebounceTimer = setTimeout(() => {
                 performSearch(searchInput.value.trim());
@@ -290,21 +289,62 @@ function initViewPage() {
         }
     }
 
+    function showContextModal(context) {
+        const contextModal = document.getElementById('context-modal');
+        const contextTextarea = document.getElementById('context-textarea');
+        const modalMessage = document.getElementById('modal-message');
+
+        if (contextModal && contextTextarea && modalMessage) {
+            // Reset message to default
+            modalMessage.textContent = 'Please copy the text below:';
+            contextTextarea.value = context;
+            contextModal.style.display = 'block';
+            contextTextarea.focus();
+            contextTextarea.select();
+        } else {
+            console.error('Modal elements not found! Cannot display context.');
+            alert('Error: could not display context modal.');
+        }
+    }
+
     if (exportBtn) {
         exportBtn.addEventListener('click', async () => {
             const response = await fetch(`/api/context/${NODE_ID}`);
             const data = await response.json();
-            try {
-                await navigator.clipboard.writeText(data.context);
-                exportBtn.textContent = 'Copied!';
-                setTimeout(() => { exportBtn.innerHTML = '<i class="fas fa-copy"></i> Export Full Context'; }, 2000);
-            } catch (err) {
-                console.error('Failed to copy text: ', err);
-                alert('Failed to copy context.');
+
+            // **THE FIX**: Always show the modal first.
+            showContextModal(data.context);
+
+            // **THE FIX**: Then, also try to copy to the clipboard.
+            if (navigator.clipboard) {
+                try {
+                    await navigator.clipboard.writeText(data.context);
+                    // Update the message in the now-visible modal.
+                    const modalMessage = document.getElementById('modal-message');
+                    if (modalMessage) {
+                        modalMessage.textContent = 'Auto-copied to clipboard! You can press Ctrl+C or copy below.';
+                    }
+                } catch (err) {
+                    console.error('Failed to auto-copy to clipboard:', err);
+                }
             }
         });
     }
-    
+
+    // --- Modal Closing Logic ---
+    const closeModalBtn = document.getElementById('close-modal-btn');
+    const contextModal = document.getElementById('context-modal');
+    if (closeModalBtn && contextModal) {
+        closeModalBtn.addEventListener('click', () => {
+            contextModal.style.display = 'none';
+        });
+        window.addEventListener('click', (event) => {
+            if (event.target == contextModal) {
+                contextModal.style.display = 'none';
+            }
+        });
+    }
+
     if (uploadBtn) {
         uploadBtn.addEventListener('click', async () => {
             if (!fileInput || fileInput.files.length === 0) {
@@ -318,7 +358,7 @@ function initViewPage() {
                 method: 'POST',
                 body: formData
             });
-            
+
             if (response.ok) {
                 alert('File uploaded successfully!');
                 fileInput.value = '';

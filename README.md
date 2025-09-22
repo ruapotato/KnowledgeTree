@@ -151,7 +151,7 @@ This project is licensed under the **GNU Affero General Public License v3.0**. S
     Bash
     
     ```
-    flask run --port=5001
+    flask run --host=0.0.0.0 --port=5001
     
     ```
     

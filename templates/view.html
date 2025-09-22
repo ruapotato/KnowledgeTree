@@ -27,6 +27,16 @@
             <button id="upload-btn">Upload File</button>
         </div>
     </div>
+
+    <div id="context-modal" class="modal">
+        <div class="modal-content">
+            <span id="close-modal-btn" class="close-btn">&times;</span>
+            <h2>Exported Context</h2>
+            <p id="modal-message">Please copy the text below:</p>
+            <textarea id="context-textarea" readonly></textarea>
+        </div>
+    </div>
+
     <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
     <script>
         const NODE_ID = "{{ node_id }}";
