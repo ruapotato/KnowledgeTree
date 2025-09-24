@@ -49,7 +49,6 @@ def prime_database_schema(tx):
 
 with driver.session() as session:
     session.write_transaction(ensure_root_exists)
-    # **THE FIX**: Prime the database schema on startup.
     session.write_transaction(prime_database_schema)
 
 
@@ -374,9 +373,30 @@ def import_user_data():
 
     return jsonify({'error': 'File import failed'}), 500
 
-@app.route('/api/context/<node_id>', methods=['GET'])
+@app.route('/api/context/tree/<node_id>', methods=['GET'])
+def get_context_tree(node_id):
+    with driver.session() as session:
+        # This query finds the direct path and then, for each node on that path,
+        # finds any folders that are directly attached.
+        path_query = """
+            MATCH p = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
+            WITH nodes(p) AS path_nodes
+            UNWIND path_nodes as ancestor
+            MATCH (ancestor)-[:PARENT_OF]->(attached:ContextItem {is_attached: true})
+            RETURN DISTINCT attached.id as id, attached.name as name
+        """
+        result = session.run(path_query, node_id=node_id)
+        attached_folders = [dict(record) for record in result]
+        return jsonify({'attached_folders': attached_folders})
+
+@app.route('/api/context/<node_id>', methods=['GET', 'POST'])
 def get_context(node_id):
-    context_parts = []
+    excluded_attached_ids = []
+    if request.method == 'POST':
+        data = request.json
+        excluded_attached_ids = data.get('excluded_ids', [])
+
+    all_context_blocks = []
     with driver.session() as session:
         path_query = """
             MATCH p = (:ContextItem {id: 'root'})-[:PARENT_OF*0..]->(:ContextItem {id: $node_id})
@@ -389,36 +409,39 @@ def get_context(node_id):
         path_nodes = result['path_nodes']
 
         for i, node in enumerate(path_nodes):
-            if node['is_folder']:
-                heading_level = '#' * (i + 1)
-                header = f"{heading_level} Context: {node['name']}"
-                context_parts.append(header)
+            # This query gets direct child articles AND articles from attached folders
+            articles_query = """
+                MATCH (folder:ContextItem {id: $folder_id})-[:PARENT_OF]->(child)
+                WHERE NOT child.is_folder AND (child.is_attached IS NULL OR child.is_attached = false)
+                RETURN child.id as id, child.name AS name, child.content AS content, "" AS source_folder
+                UNION
+                MATCH (folder:ContextItem {id: $folder_id})-[:PARENT_OF]->(attached:ContextItem {is_attached: true})
+                WHERE NOT attached.id IN $excluded_ids
+                MATCH (attached)-[:PARENT_OF*..]->(article:ContextItem)
+                WHERE NOT article.is_folder
+                RETURN article.id as id, article.name AS name, article.content AS content, attached.name AS source_folder
+            """
+            articles_result = session.run(articles_query, folder_id=node['id'], excluded_ids=excluded_attached_ids)
 
-                folder_id = node['id']
+            content_block_items = []
+            for record in articles_result:
+                file_header = f"File: {record['name']}"
+                if record['source_folder']:
+                    file_header += f" (from attached folder: {record['source_folder']})"
+                content_block_items.append(f"{file_header}\n\n{record['content'] or '> No content.'}")
 
-                articles_query = """
-                    MATCH (folder:ContextItem {id: $folder_id})-[:PARENT_OF]->(article:ContextItem)
-                    WHERE article.is_folder = false AND (article.is_attached IS NULL OR article.is_attached = false)
-                    RETURN article.name AS name, article.content AS content, "" AS source_folder
-                    UNION
-                    MATCH (folder:ContextItem {id: $folder_id})-[:PARENT_OF]->(attached:ContextItem {is_attached: true})
-                    MATCH (attached)-[:PARENT_OF*..]->(article:ContextItem)
-                    WHERE article.is_folder = false
-                    RETURN article.name AS name, article.content AS content, attached.name AS source_folder
-                """
-                articles_result = session.run(articles_query, folder_id=folder_id)
+            if content_block_items:
+                all_context_blocks.append({
+                    "header": f"Context: {node['name']}",
+                    "content": "\n\n".join(content_block_items),
+                    "depth": i + 1
+                })
 
-                folder_content = []
-                for record in articles_result:
-                    file_header = f"{heading_level}# File: {record['name']}"
-                    if record['source_folder']:
-                        file_header += f" (from attached folder: {record['source_folder']})"
-
-                    folder_content.append(file_header)
-                    folder_content.append(record['content'] or "> No content.")
-
-                if folder_content:
-                    context_parts.append("\n\n".join(folder_content))
+        final_context_parts = []
+        for block in sorted(all_context_blocks, key=lambda x: x['depth']):
+            heading = '#' * block['depth']
+            final_context_parts.append(f"{heading} {block['header']}")
+            final_context_parts.append(block['content'])
 
         files_query = """
             OPTIONAL MATCH (:ContextItem {id: $node_id})-[:HAS_FILE]->(f:File)
@@ -427,11 +450,10 @@ def get_context(node_id):
         files_result = session.run(files_query, node_id=node_id)
         filenames = [record['filename'] for record in files_result if record['filename'] is not None]
         if filenames:
-            context_parts.append(f"## Attached Files for {path_nodes[-1]['name']}")
-            file_list = [f"- {name}" for name in filenames]
-            context_parts.append("\n".join(file_list))
+            final_context_parts.append(f"## Attached Files for {path_nodes[-1]['name']}")
+            final_context_parts.append("\n".join([f"- {name}" for name in filenames]))
 
-    full_context = "\n\n".join(context_parts)
+    full_context = "\n\n".join(final_context_parts)
     return jsonify({'context': full_context})
 
 

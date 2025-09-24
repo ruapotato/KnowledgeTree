@@ -31,9 +31,11 @@
     <div id="context-modal" class="modal">
         <div class="modal-content">
             <span id="close-modal-btn" class="close-btn">&times;</span>
-            <h2>Exported Context</h2>
-            <p id="modal-message">Please copy the text below:</p>
-            <textarea id="context-textarea" readonly></textarea>
+            <h2>Export Context</h2>
+            <p id="modal-message">Select the items to include in the exported context.</p>
+            <div id="context-tree-container"></div>
+            <textarea id="context-textarea" readonly style="display: none;"></textarea>
+            <button id="generate-context-btn">Generate & Copy Context</button>
         </div>
     </div>
 

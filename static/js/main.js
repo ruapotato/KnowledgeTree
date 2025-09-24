@@ -289,47 +289,90 @@ function initViewPage() {
         }
     }
 
-    function showContextModal(context) {
-        const contextModal = document.getElementById('context-modal');
-        const contextTextarea = document.getElementById('context-textarea');
-        const modalMessage = document.getElementById('modal-message');
-
-        if (contextModal && contextTextarea && modalMessage) {
-            // Reset message to default
-            modalMessage.textContent = 'Please copy the text below:';
-            contextTextarea.value = context;
-            contextModal.style.display = 'block';
-            contextTextarea.focus();
-            contextTextarea.select();
-        } else {
-            console.error('Modal elements not found! Cannot display context.');
-            alert('Error: could not display context modal.');
+    function buildAttachedFolderList(folders, container) {
+        if (folders.length === 0) {
+            container.innerHTML = '<p>No attached folders in this context.</p>';
+            return;
         }
+
+        const ul = document.createElement('ul');
+        folders.forEach(folder => {
+            const li = document.createElement('li');
+            li.className = 'context-tree-item';
+
+            const label = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = true; // Default to included
+            checkbox.dataset.id = folder.id;
+
+            label.innerHTML = `<i class="fas fa-paperclip"></i> ${folder.name}`;
+            label.prepend(checkbox);
+            li.appendChild(label);
+            ul.appendChild(li);
+        });
+        container.appendChild(ul);
     }
 
     if (exportBtn) {
         exportBtn.addEventListener('click', async () => {
-            const response = await fetch(`/api/context/${NODE_ID}`);
+            const contextModal = document.getElementById('context-modal');
+            const treeContainer = document.getElementById('context-tree-container');
+            const contextTextarea = document.getElementById('context-textarea');
+            const generateBtn = document.getElementById('generate-context-btn');
+
+            treeContainer.innerHTML = 'Loading...';
+            contextTextarea.style.display = 'none';
+            treeContainer.style.display = 'block';
+            generateBtn.style.display = 'block';
+            contextModal.style.display = 'block';
+
+            const response = await fetch(`/api/context/tree/${NODE_ID}`);
             const data = await response.json();
 
-            // **THE FIX**: Always show the modal first.
-            showContextModal(data.context);
+            treeContainer.innerHTML = ''; // Clear loading message
+            buildAttachedFolderList(data.attached_folders, treeContainer);
+        });
+    }
 
-            // **THE FIX**: Then, also try to copy to the clipboard.
+    const generateContextBtn = document.getElementById('generate-context-btn');
+    if (generateContextBtn) {
+        generateContextBtn.addEventListener('click', async () => {
+            const treeContainer = document.getElementById('context-tree-container');
+            const contextTextarea = document.getElementById('context-textarea');
+            const modalMessage = document.getElementById('modal-message');
+
+            const excludedIds = Array.from(treeContainer.querySelectorAll('input[type="checkbox"]:not(:checked)'))
+                                     .map(cb => cb.dataset.id);
+
+            const response = await fetch(`/api/context/${NODE_ID}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ excluded_ids: excludedIds })
+            });
+            const data = await response.json();
+
+            treeContainer.style.display = 'none';
+            generateContextBtn.style.display = 'none';
+            contextTextarea.style.display = 'block';
+
+            contextTextarea.value = data.context;
+            contextTextarea.focus();
+            contextTextarea.select();
+
+            modalMessage.textContent = 'Auto-copied to clipboard! You can also copy the text below.';
+
             if (navigator.clipboard) {
                 try {
                     await navigator.clipboard.writeText(data.context);
-                    // Update the message in the now-visible modal.
-                    const modalMessage = document.getElementById('modal-message');
-                    if (modalMessage) {
-                        modalMessage.textContent = 'Auto-copied to clipboard! You can press Ctrl+C or copy below.';
-                    }
                 } catch (err) {
                     console.error('Failed to auto-copy to clipboard:', err);
+                    modalMessage.textContent = 'Could not auto-copy. Please copy the text manually.';
                 }
             }
         });
     }
+
 
     // --- Modal Closing Logic ---
     const closeModalBtn = document.getElementById('close-modal-btn');

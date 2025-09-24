@@ -22,14 +22,11 @@
                 {% endif %}
 
                 <nav id="breadcrumb">
+                    <a href="/browse/">root</a> /
                     {% for name in breadcrumb_names[1:] %}
                         {% set path_slice = breadcrumb_names[1:loop.index+1] %}
-                        {% if not loop.last %}
-                            <a href="/browse/{{ path_slice | map('quote_plus') | join('/') }}">{{ name }}</a>
-                            <span>&gt;</span>
-                        {% else %}
-                            {{ name }}
-                        {% endif %}
+                        <a href="/browse/{{ path_slice | map('quote_plus') | join('/') }}">{{ name }}</a>
+                        {% if not loop.last %}/{% endif %}
                     {% endfor %}
                 </nav>
                 <input type="search" id="search-input" placeholder="Search..." autocomplete="off" data-start-node="{{ current_node_id }}" />
@@ -61,6 +58,16 @@
             <li id="context-new-folder"><i class="fas fa-folder-plus"></i> New Folder</li>
             <li id="context-new-attached"><i class="fas fa-paperclip"></i> New Attached Folder</li>
             <li id="context-new-article"><i class="fas fa-file-medical"></i> New Knowledge</li>
+        </ul>
+    </div>
+
+    <div class="legend">
+        <h3>Legend</h3>
+        <ul>
+            <li><i class="fas fa-folder"></i> Folder</li>
+            <li><i class="fas fa-file-alt"></i> Knowledge Article</li>
+            <li><i class="fas fa-paperclip"></i> Attached Folder (Links context from another location)</li>
+            <li class="read-only-legend"><i class="fas fa-file-alt"></i> Read-Only Item (Synced from external service)</li>
         </ul>
     </div>
 
