@@ -12,6 +12,8 @@ from neo4j import GraphDatabase, basic_auth
 import markdown
 from scripts.pull_freshservice import sync_companies_and_users
 from scripts.pull_datto import sync_datto_devices
+from scripts.pull_fresh_tickets import sync_fresh_tickets
+
 
 load_dotenv()
 
@@ -289,6 +291,10 @@ def run_job(job_name):
     elif job_name == 'datto':
         threading.Thread(target=sync_datto_devices).start()
         return jsonify({'success': True, 'message': 'Datto sync started.'})
+    elif job_name == 'freshtickets':
+        overwrite = request.json.get('overwrite', False)
+        threading.Thread(target=sync_fresh_tickets, args=(overwrite,)).start()
+        return jsonify({'success': True, 'message': 'Freshservice ticket sync started.'})
     return jsonify({'success': False, 'error': 'Invalid job name.'}), 400
 
 @app.route('/api/admin/export', methods=['GET'])

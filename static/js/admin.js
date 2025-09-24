@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const settingsForm = document.getElementById('settings-form');
     const runFreshserviceBtn = document.getElementById('run-freshservice');
     const runDattoBtn = document.getElementById('run-datto');
+    const runFreshTicketsBtn = document.getElementById('run-freshtickets');
+    const overwriteCheckbox = document.getElementById('overwrite-tickets-checkbox');
     const exportBtn = document.getElementById('export-data-btn');
     const importBtn = document.getElementById('import-data-btn');
     const importFileInput = document.getElementById('import-file-input');
@@ -11,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (reinitDbBtn) {
         reinitDbBtn.addEventListener('click', async () => {
             const confirmation = prompt('This is a destructive action that cannot be undone. To confirm, type "DELETE" in the box below:');
-            
+
             if (confirmation === 'DELETE') {
                 try {
                     const response = await fetch('/api/admin/reinitialize_db', {
@@ -82,6 +84,24 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    if (runFreshTicketsBtn) {
+        runFreshTicketsBtn.addEventListener('click', async () => {
+            runFreshTicketsBtn.disabled = true;
+            runFreshTicketsBtn.textContent = 'Syncing...';
+            const shouldOverwrite = overwriteCheckbox.checked;
+
+            const response = await fetch('/api/admin/run_job/freshtickets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ overwrite: shouldOverwrite })
+            });
+            const result = await response.json();
+            alert(result.message || result.error);
+            runFreshTicketsBtn.disabled = false;
+            runFreshTicketsBtn.innerHTML = '<i class="fas fa-sync"></i> Run Freshservice Ticket Sync';
+        });
+    }
+
     if (exportBtn) {
         exportBtn.addEventListener('click', async () => {
             window.location.href = '/api/admin/export';
@@ -102,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const formData = new FormData();
             formData.append('file', file);
-            
+
             importBtn.disabled = true;
             importBtn.textContent = 'Importing...';
 
@@ -117,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 alert(`An error occurred: ${result.error}`);
             }
-            
+
             importBtn.disabled = false;
             importBtn.textContent = 'Import User Data';
         });

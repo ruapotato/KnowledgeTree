@@ -18,7 +18,7 @@ driver = GraphDatabase.driver(uri, auth=(user, password))
 # --- Freshservice Configuration ---
 FRESHSERVICE_DOMAIN = os.getenv("FRESHSERVICE_DOMAIN")
 API_KEY = os.getenv("FRESHSERVICE_API_KEY")
-ACCOUNT_NUMBER_FIELD = "account_number" 
+ACCOUNT_NUMBER_FIELD = "account_number"
 
 def get_freshservice_companies():
     """Fetches all companies from the Freshservice API."""
@@ -41,7 +41,7 @@ def get_freshservice_companies():
                 break
             all_companies.extend(companies_on_page)
             page += 1
-            time.sleep(0.5) 
+            time.sleep(0.5)
         except requests.exceptions.RequestException as e:
             print(f"Error fetching Freshservice companies: {e}", file=sys.stderr)
             return None
@@ -124,10 +124,12 @@ def sync_companies_and_users():
         for user in users:
             if not user.get('active'):
                 continue
-            
+
             user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
             user_email = user.get('primary_email')
             department_ids = user.get('department_ids')
+            fs_requester_id = user.get('id')
+
 
             if not user_name or not user_email or not department_ids:
                 continue
@@ -148,13 +150,18 @@ def sync_companies_and_users():
                     session.run("""
                         MATCH (users_root:ContextItem {id: 'users_for_' + $account_number})
                         MERGE (user_folder:ContextItem {id: $user_email, name: $user_name, is_folder: true, user_email: $user_email})
+                        SET user_folder.freshservice_requester_id = $fs_requester_id
                         MERGE (users_root)-[:PARENT_OF]->(user_folder)
+
                         MERGE (contact_md:ContextItem {id: 'contact_for_' + $user_email, name: 'Contact.md', is_folder: false, user_email: $user_email})
                         ON CREATE SET contact_md.content = $content, contact_md.read_only = true
                         ON MATCH SET contact_md.content = $content, contact_md.read_only = true
                         MERGE (user_folder)-[:PARENT_OF]->(contact_md)
-                    """, account_number=account_number, user_name=user_name, user_email=user_email, content=contact_md_content)
-                    break 
+
+                        MERGE (tickets_folder:ContextItem {id: 'tickets_for_' + $user_email, name: 'Tickets', is_folder: true, is_attached: true})
+                        MERGE (user_folder)-[:PARENT_OF]->(tickets_folder)
+                    """, account_number=account_number, user_name=user_name, user_email=user_email, content=contact_md_content, fs_requester_id=fs_requester_id)
+                    break
 
 if __name__ == "__main__":
     sync_companies_and_users()

@@ -4,3 +4,4 @@ python-dotenv
 markdown
 requests
 schedule
+markdownify
