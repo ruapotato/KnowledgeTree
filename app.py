@@ -302,7 +302,9 @@ def export_user_data():
         with driver.session() as session:
             result = session.run("""
                 MATCH p = (:ContextItem {id:'root'})-[:PARENT_OF*..]->(n:ContextItem)
-                WHERE (n.read_only IS NULL OR n.read_only = false) AND n.id <> 'root'
+                // This ensures that every node in the path from the root's direct children
+                // to the target node `n` is user-created (not read-only).
+                WHERE ALL(node IN nodes(p)[1..] WHERE node.read_only IS NULL OR node.read_only = false)
                 RETURN [node IN nodes(p) | node.name] AS path_parts,
                        n.content AS content,
                        n.is_folder AS is_folder,
