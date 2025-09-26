@@ -302,16 +302,22 @@ def export_user_data():
         with driver.session() as session:
             result = session.run("""
                 MATCH p = (:ContextItem {id:'root'})-[:PARENT_OF*..]->(n:ContextItem)
-                WHERE (n.read_only IS NULL OR n.read_only = false) AND n.is_folder = false
-                RETURN [node IN nodes(p) | node.name] AS path_parts, n.content AS content
+                WHERE (n.read_only IS NULL OR n.read_only = false) AND n.id <> 'root'
+                RETURN [node IN nodes(p) | node.name] AS path_parts,
+                       n.content AS content,
+                       n.is_folder AS is_folder,
+                       n.is_attached AS is_attached
             """)
 
             export_data = []
             for record in result:
-                file_path = "/".join(record['path_parts'][1:])
+                # The path includes 'KnowledgeTree Root', which we skip for the export path
+                path = "/".join(record['path_parts'][1:])
                 export_data.append({
-                    "path": file_path,
-                    "content": record['content']
+                    "path": path,
+                    "content": record['content'],
+                    "is_folder": record['is_folder'],
+                    "is_attached": record['is_attached']
                 })
 
             export_file_path = "export.json"
@@ -331,46 +337,55 @@ def import_user_data():
     if file:
         try:
             import_data = json.load(file)
+            # Sort by path so that parent directories are processed before their children
+            import_data.sort(key=lambda x: x['path'])
 
             with driver.session() as session:
                 with session.begin_transaction() as tx:
                     for item in import_data:
                         path_parts = item['path'].split('/')
-                        content = item['content']
+                        item_name = path_parts[-1]
+                        parent_path_parts = path_parts[:-1]
 
-                        file_name = path_parts.pop()
+                        # Find the parent node by traversing from the root
                         current_parent_id = 'root'
-
-                        for folder_name in path_parts:
-                            result = tx.run("""
-                                MATCH (parent:ContextItem {id: $parent_id})-[:PARENT_OF]->(child:ContextItem {name: $name})
-                                RETURN child.id AS id
-                            """, parent_id=current_parent_id, name=folder_name).single()
+                        for folder_name in parent_path_parts:
+                            result = tx.run(
+                                "MATCH (parent:ContextItem {id: $parent_id})-[:PARENT_OF]->(child:ContextItem {name: $name}) RETURN child.id as id",
+                                parent_id=current_parent_id, name=folder_name).single()
 
                             if result:
                                 current_parent_id = result['id']
                             else:
-                                new_folder_id = str(uuid.uuid4())
-                                tx.run("""
-                                    MATCH (parent:ContextItem {id: $parent_id})
-                                    CREATE (child:ContextItem {id: $id, name: $name, is_folder: true, read_only: false})
-                                    CREATE (parent)-[:PARENT_OF]->(child)
-                                """, parent_id=current_parent_id, id=new_folder_id, name=folder_name)
-                                current_parent_id = new_folder_id
+                                # This error means the import file is missing a parent folder definition, or is not sorted correctly.
+                                raise Exception(f"Inconsistent data: parent folder '{folder_name}' not found for item '{item_name}'.")
 
+                        # Create or update the item itself
+                        is_folder = item.get('is_folder', False)
+                        # The 'is_attached' flag should only apply to folders
+                        is_attached = item.get('is_attached', False) and is_folder
+                        # Files have content, folders do not
+                        content = item.get('content', '') if not is_folder else ''
+
+                        # MERGE on the relationship pattern to correctly find or create the node.
+                        # This is the idiomatic way to handle nodes that are unique per parent.
                         tx.run("""
                             MATCH (parent:ContextItem {id: $parent_id})
-                            MERGE (file:ContextItem {name: $name, parent_id_for_merge: $parent_id})
-                            ON CREATE SET file.id = $id, file.content = $content, file.is_folder = false, file.read_only = false
-                            ON MATCH SET file.content = $content
-                            MERGE (parent)-[:PARENT_OF]->(file)
-                        """, parent_id=current_parent_id, name=file_name, id=str(uuid.uuid4()), content=content)
+                            MERGE (parent)-[r:PARENT_OF]->(item:ContextItem {name: $name})
+                            ON CREATE SET item.id = $id,
+                                          item.is_folder = $is_folder,
+                                          item.is_attached = $is_attached,
+                                          item.content = $content,
+                                          item.read_only = false
+                            ON MATCH SET  item.is_folder = $is_folder,
+                                          item.is_attached = $is_attached,
+                                          item.content = $content
+                        """, parent_id=current_parent_id, name=item_name, id=str(uuid.uuid4()),
+                             is_folder=is_folder, is_attached=is_attached, content=content)
 
             return jsonify({'success': True, 'message': 'Import successful.'})
-
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
-
     return jsonify({'error': 'File import failed'}), 500
 
 @app.route('/api/context/tree/<node_id>', methods=['GET'])
